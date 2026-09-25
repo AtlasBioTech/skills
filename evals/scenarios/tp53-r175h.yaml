@@ -1,0 +1,51 @@
+# The Workbench demo question: a clinician asks about one TP53 variant.
+# A run passes when the agent ends its turn cleanly, writes a notebook that
+# runs top to bottom and shows the variant on the structure, and answers in
+# French with the key facts. Format: see ../README.md.
+id: tp53-r175h
+title: TP53 p.R175H — localisation, pathogénicité, littérature
+
+prompts:
+  - >-
+    Le patient porte le variant TP53 p.R175H. Où se situe-t-il sur la protéine,
+    est-il connu comme pathogène, et que dit la littérature ?
+
+# Per prompt: from sending it to the agent's turn_end.
+timeout_s: 900
+
+notebook:
+  path: /workspace/notebook.py
+  must_change: true
+  must_run: true
+  run_timeout_s: 300
+  checks:
+    - name: uniprot_accession
+      why: the analysis is anchored on the canonical TP53 entry
+      pattern: 'P04637'
+    - name: fetches_public_data
+      why: data comes from a live EBI/UniProt/NCBI query, not from memory
+      pattern: 'https?://(rest\.uniprot\.org|www\.ebi\.ac\.uk|alphafold\.ebi\.ac\.uk|eutils\.ncbi\.nlm\.nih\.gov|www\.ncbi\.nlm\.nih\.gov)'
+    - name: uses_atlas_viewers
+      why: results are shown with the Workbench viewers
+      pattern: '^\s*(import atlas_viewers|from atlas_viewers import)'
+      flags: im
+    - name: structure_viewer
+      why: the 3D structure is displayed
+      pattern: '\b(av|atlas_viewers)\.structure\('
+    - name: highlights_175
+      why: residue 175 is highlighted in a viewer
+      pattern: 'highlight\s*=\s*\[[^\]]*\b175\b'
+
+answer:
+  language: fr
+  keywords:
+    - name: dna_binding_domain
+      any: ["liaison à l'ADN", "DNA-binding", "domaine de liaison"]
+    - name: pathogenic
+      any: ["pathogène"]
+    - name: clinvar
+      any: ["ClinVar"]
+    - name: li_fraumeni
+      any: ["Li-Fraumeni", "Li Fraumeni"]
+    - name: zinc_or_hotspot
+      any: ["zinc", "point chaud", "hotspot"]
