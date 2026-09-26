@@ -59,7 +59,10 @@ def _(ACCESSION, RESIDUE, get_json, mo):
     else:
         _out = None
     length = uniprot["sequence"]["length"] if uniprot else 0
-    # Regions worth drawing on the variant plot: domains, named regions and motifs.
+    # Regions worth drawing on the variant plot: domains, named regions and motifs,
+    # not the disordered stretches or the partner-binding regions ("Interaction
+    # with X", "Required for interaction with Y"), which are long and would
+    # cover the structural domains.
     domains = [
         {
             "start": _f["location"]["start"]["value"],
@@ -68,7 +71,7 @@ def _(ACCESSION, RESIDUE, get_json, mo):
         }
         for _f in (uniprot or {}).get("features", [])
         if _f["type"] in ("Domain", "Region", "Motif", "DNA binding", "Zinc finger")
-        and not (_f.get("description") or "").startswith(("Disordered", "Interaction"))
+        and not any(_w in (_f.get("description") or "").lower() for _w in ("disordered", "interaction"))
     ]
     # Functional sites within 5 residues of the variant (ligand binding, catalytic,
     # DNA contact): what the substitution may disturb.
