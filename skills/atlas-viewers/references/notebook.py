@@ -36,7 +36,8 @@ def _(requests):
     ACCESSION = "P01116"  # KRAS humaine, UniProt
     GENE = "KRAS"
     VARIANT = "G12D"
-    return ACCESSION, GENE, VARIANT, get_json
+    RESIDUE = 12
+    return ACCESSION, GENE, RESIDUE, VARIANT, get_json
 
 
 @app.cell
@@ -48,8 +49,8 @@ def _(mo):
 
 
 @app.cell
-def _(ACCESSION, get_json, mo):
-    # Length and annotated regions come from UniProt, not from memory.
+def _(ACCESSION, RESIDUE, get_json, mo):
+    # Length, regions and sites come from UniProt, not from memory.
     try:
         uniprot = get_json(f"https://rest.uniprot.org/uniprotkb/{ACCESSION}.json")
     except Exception as _err:  # a failed request is shown, the notebook keeps running
@@ -69,12 +70,21 @@ def _(ACCESSION, get_json, mo):
         if _f["type"] in ("Domain", "Region", "Motif", "DNA binding", "Zinc finger")
         and not (_f.get("description") or "").startswith(("Disordered", "Interaction"))
     ]
+    # Functional sites within 5 residues of the variant (ligand binding, catalytic,
+    # DNA contact): what the substitution may disturb.
+    sites = [
+        f"{(_f.get('ligand') or {}).get('name') or _f.get('description') or _f['type']} "
+        f"({_f['type'].lower()}, résidu {_f['location']['start']['value']})"
+        for _f in (uniprot or {}).get("features", [])
+        if _f["type"] in ("Binding site", "Active site", "Site")
+        and abs(_f["location"]["start"]["value"] - RESIDUE) <= 5
+    ]
     _out if _out is not None else mo.md(
         f"**{uniprot['proteinDescription']['recommendedName']['fullName']['value']}**, "
         f"{length} acides aminés ([{ACCESSION}](https://www.uniprot.org/uniprotkb/{ACCESSION}/entry)). "
         + "Régions : " + ", ".join(f"{d['name']} ({d['start']}–{d['end']})" for d in domains)
     )
-    return domains, length
+    return domains, length, sites
 
 
 @app.cell
@@ -149,12 +159,14 @@ def _(GENE, get_json, pd):
                 if not _match or _match.group(1) not in _AA or _match.group(3) not in _AA:
                     continue
                 _germline = _record.get("germline_classification") or {}
+                _conditions = {_t["trait_name"] for _t in _germline.get("trait_set", []) if _t.get("trait_name")}
                 _rows.append(
                     {
                         "variant": f"{_AA[_match.group(1)]}{_match.group(2)}{_AA[_match.group(3)]}",
                         "position": int(_match.group(2)),
                         "significance": _germline.get("description") or "not provided",
                         "review": _germline.get("review_status", ""),
+                        "conditions": "; ".join(sorted(_conditions - {"not provided"})),
                         "clinvar_id": _uid,
                     }
                 )
@@ -162,7 +174,7 @@ def _(GENE, get_json, pd):
     except Exception as _err:
         clinvar_error = str(_err)
     # The same protein change can be listed on several transcripts: keep one row per change.
-    clinvar = pd.DataFrame(_rows, columns=["variant", "position", "significance", "review", "clinvar_id"])
+    clinvar = pd.DataFrame(_rows, columns=["variant", "position", "significance", "review", "conditions", "clinvar_id"])
     clinvar = clinvar.drop_duplicates("variant").sort_values("position").reset_index(drop=True)
     return clinvar, clinvar_error
 
@@ -184,10 +196,10 @@ def _(av, clinvar, clinvar_error, domains, length, mo):
 
 
 @app.cell
-def _(VARIANT, av, clinvar, mo):
+def _(RESIDUE, VARIANT, av, clinvar, mo):
     # The patient's variant first, then the other changes at the same residue.
     mo.stop(clinvar.empty)
-    _same_residue = clinvar[clinvar["position"] == 12].assign(_other=lambda df: df["variant"] != VARIANT)
+    _same_residue = clinvar[clinvar["position"] == RESIDUE].assign(_other=lambda df: df["variant"] != VARIANT)
     av.table(
         _same_residue.sort_values("_other").drop(columns="_other"),
         links={"ClinVar": "https://www.ncbi.nlm.nih.gov/clinvar/variation/{clinvar_id}/"},
@@ -206,6 +218,7 @@ def _(mo):
 
 @app.cell
 def _(GENE, VARIANT, av, get_json, mo, pd):
+    literature_count = None
     try:
         _found = get_json(
             "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
@@ -229,6 +242,7 @@ def _(GENE, VARIANT, av, get_json, mo, pd):
                 for _r in _found["resultList"]["result"]
             ]
         )
+        literature_count = int(_found["hitCount"])
         _view = av.table(
             _papers,
             links={"PubMed": "https://pubmed.ncbi.nlm.nih.gov/{pmid}/"},
@@ -237,6 +251,31 @@ def _(GENE, VARIANT, av, get_json, mo, pd):
     except Exception as _err:
         _view = mo.callout(mo.md(f"Europe PMC injoignable : {_err}"), kind="warn")
     _view
+    return (literature_count,)
+
+
+@app.cell
+def _(RESIDUE, VARIANT, clinvar, domains, literature_count, mo, sites):
+    # The facts the answer rests on, computed from the data above. Printed as
+    # well: `python notebook.py` then shows them to whoever checks the notebook.
+    _domain = next((d for d in domains if d["start"] <= RESIDUE <= d["end"]), None)
+    _ours = clinvar[clinvar["variant"] == VARIANT]
+    _pathogenic = clinvar["significance"].str.contains("athogenic", na=False) & ~clinvar["significance"].str.contains("onflicting|enign", na=False)
+    _at_residue = int((_pathogenic & (clinvar["position"] == RESIDUE)).sum())
+    facts = [
+        f"Région : {_domain['name']} ({_domain['start']}–{_domain['end']})" if _domain else "Région : aucune région annotée",
+        f"Sites fonctionnels à ±5 résidus (UniProt) : {', '.join(sites) or 'aucun'}",
+        (
+            f"ClinVar {VARIANT} : {_ours.iloc[0]['significance']} ({_ours.iloc[0]['review']}), "
+            f"variation {_ours.iloc[0]['clinvar_id']}, pour : {_ours.iloc[0]['conditions'][:300] or 'non précisé'}"
+            if len(_ours)
+            else f"ClinVar {VARIANT} : absent de la recherche"
+        ),
+        f"Variants pathogènes en position {RESIDUE} : {_at_residue} (point chaud mutationnel si plusieurs)",
+        f"Articles (Europe PMC) : {literature_count if literature_count is not None else 'non disponible'}",
+    ]
+    print("\n".join(facts))
+    mo.md("## Résumé des données\n\n" + "\n".join(f"- {f}" for f in facts))
     return
 
 

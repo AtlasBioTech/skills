@@ -67,7 +67,26 @@ Read [`references/notebook.py`](references/notebook.py): a complete notebook
 (KRAS p.G12D) that runs as is. For another protein, copy its cells and change
 the accession, the gene, the variant and the residue numbers; keep the
 structure: question → protein (UniProt) → 3D structure → ClinVar variants
-plot and table → literature → sources.
+plot and table → literature → **facts** → sources.
+
+The facts cell computes, from the data above, what the answer rests on, and
+also `print`s it, so `python notebook.py` shows it to you:
+
+- the region or domain holding the residue;
+- functional sites within a few residues (UniProt binding sites of a
+  ligand or a metal ion, catalytic or DNA-contact sites);
+- the variant's ClinVar classification, review status, variation id and
+  the conditions it is reported for;
+- how many pathogenic variants sit at the same residue (several = a
+  mutational hotspot);
+- how many articles mention the variant.
+
+## Answer from the data
+
+Your chat answer states these facts with their numbers and sources, in
+French, as found by the notebook — not from memory and not hedged with
+"généralement". Add what the literature says (the most cited articles) and
+the clinical context (the conditions ClinVar lists for the variant).
 
 ## Before you end your turn
 
@@ -76,4 +95,5 @@ plot and table → literature → sources.
    calls for the data. If a viewer is missing, add its cell now.
 2. Run, from the workspace folder, `marimo check notebook.py` then
    `python notebook.py` (must exit 0). Fix and re-run until both pass.
-3. Answer in the chat and point to what the notebook shows.
+3. Answer in the chat from the facts `python notebook.py` printed, and
+   point to what the notebook shows.
