@@ -88,7 +88,7 @@ describe("grade", () => {
 });
 
 test("normalize folds accents, case and curly apostrophes", () => {
-  expect(normalize("Liaison à l’ADN — Pathogène")).toBe("liaison a l'adn — pathogene");
+  expect(normalize("Liaison à l’ADN — Pathogène")).toBe("liaison a l'adn - pathogene");
 });
 
 test("frenchScore needs enough French words", () => {
@@ -142,4 +142,12 @@ test("summarize ranks models by pass rate", () => {
   expect(lines[4]).toStartWith("| strong | 2/2 | 100 % | 30 s |");
   expect(lines[5]).toContain("notebook_runs (1/1)");
   expect(median([3, null, 1, 2])).toBe(2);
+});
+
+describe("normalize", () => {
+  test("typographic hyphens and spaces match their plain forms", () => {
+    // Sonnet wrote "Li‑Fraumeni" with U+2011 and lost the keyword.
+    expect(normalize("syndrome de Li‑Fraumeni")).toContain(normalize("Li-Fraumeni"));
+    expect(normalize("TP53 p.R175H")).toBe("tp53 p.r175h");
+  });
 });

@@ -42,7 +42,7 @@ answer:
     - name: dna_binding_domain
       any: ["liaison à l'ADN", "DNA-binding", "domaine de liaison"]
     - name: pathogenic
-      any: ["pathogène"]
+      any: ["pathogène", "pathogénique", "pathogénicité", "pathogenic"]
     - name: clinvar
       any: ["ClinVar"]
     - name: li_fraumeni

@@ -72,12 +72,18 @@ export function grade(scenario: Scenario, obs: Observation): Check[] {
   return checks;
 }
 
-/** Lowercase, no accents, straight apostrophes: "Pathogène" matches "pathogene". */
+/**
+ * Lowercase, no accents, straight apostrophes, plain hyphens and spaces:
+ * "Pathogène" matches "pathogene", and "Li‑Fraumeni" written with a
+ * non-breaking hyphen (U+2011, as models often do) matches "Li-Fraumeni".
+ */
 export function normalize(text: string): string {
   return text
     .normalize("NFD")
     .replace(/\p{M}/gu, "")
     .replace(/[‘’ʼ]/g, "'")
+    .replace(/[\u2010-\u2015\u2212]/g, "-")
+    .replace(/[\u00a0\u202f]/g, " ")
     .toLowerCase();
 }
 
