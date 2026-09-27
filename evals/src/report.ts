@@ -12,6 +12,9 @@ export type RunRecord = {
   base_url: string;
   attempt: number;
   started_at: string;
+  /** The project the harness created, and its active notebook (relative to it). */
+  project?: string;
+  notebook?: string;
   pass: boolean;
   /** First failed check, or the harness error that stopped the run. */
   failure: string | null;
@@ -24,6 +27,8 @@ export type RunRecord = {
     tool_calls_failed: number;
     tool_calls_by_kind: Record<string, number>;
     permissions: { title: string; kind: string; option_id: string }[];
+    /** Skills the agent loaded with its skill tool. */
+    skills?: string[];
     tokens: Tokens | null;
   };
   errors: string[];
@@ -49,6 +54,7 @@ export function summarize(records: RunRecord[], scenarioId: string): string {
           fmt(median(rs.map((r) => r.metrics.wall_s)), " s"),
           fmt(median(rs.map((r) => r.metrics.tool_calls))),
           fmt(median(rs.map((r) => r.metrics.tokens?.total ?? null))),
+          skillCounts(rs),
           mainFailure(rs),
         ],
       };
@@ -58,7 +64,7 @@ export function summarize(records: RunRecord[], scenarioId: string): string {
   const out = [
     `## ${scenarioId} — ${records.length} runs`,
     "",
-    table(["model", "passed", "pass rate", "median time", "median tool calls", "median tokens", "main failure"], rows.map((r) => r.cells)),
+    table(["model", "passed", "pass rate", "median time", "median tool calls", "median tokens", "skills loaded", "main failure"], rows.map((r) => r.cells)),
   ];
 
   // Per-check pass counts: shows how close a failing model is.
@@ -82,6 +88,13 @@ export function summarize(records: RunRecord[], scenarioId: string): string {
     );
   }
   return out.join("\n") + "\n";
+}
+
+/** Each skill the model loaded, with in how many of its runs: "atlas-viewers (2/3)". */
+function skillCounts(rs: RunRecord[]): string {
+  const counts = new Map<string, number>();
+  for (const r of rs) for (const s of r.metrics.skills ?? []) counts.set(s, (counts.get(s) ?? 0) + 1);
+  return counts.size ? [...counts].map(([s, n]) => `${s} (${n}/${rs.length})`).join(", ") : "—";
 }
 
 function mainFailure(rs: RunRecord[]): string {

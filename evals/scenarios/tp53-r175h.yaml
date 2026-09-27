@@ -13,8 +13,9 @@ prompts:
 # Per prompt: from sending it to the agent's turn_end.
 timeout_s: 900
 
+# The harness creates a project named after the scenario id and sends the
+# prompts with its first notebook, notebooks/analyse.py, as the active one.
 notebook:
-  path: /workspace/notebook.py
   must_change: true
   must_run: true
   run_timeout_s: 300
@@ -33,8 +34,10 @@ notebook:
       why: the 3D structure is displayed
       pattern: '\b(av|atlas_viewers)\.structure\('
     - name: highlights_175
-      why: residue 175 is highlighted in a viewer
-      pattern: 'highlight\s*=\s*\[[^\]]*\b175\b'
+      why: >-
+        residue 175 is highlighted in a viewer, written as the number or as a
+        name bound to it (POSITION = 175 … highlight=[POSITION])
+      pattern: 'highlight\s*=\s*\[[^\]]*\b175\b|\b([A-Za-z_]\w*)\s*=\s*175\b[\s\S]*highlight\s*=\s*\[[^\]]*\b\1\b'
 
 answer:
   language: fr

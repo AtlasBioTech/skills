@@ -10,8 +10,12 @@ export type Check = { name: string; pass: boolean; detail?: string };
 export type Observation = {
   turns: Turn[];
   errors: string[];
-  notebookBefore: string | null;
-  notebookAfter: string | null;
+  /** The active notebook, relative to the workspace root ("tp53-r175h/notebooks/analyse.py"). */
+  activeNotebook: string;
+  /** Every notebook in the workspace (path → content) once the conversation was open, before the first prompt… */
+  notebooksBefore: Record<string, string>;
+  /** …and after the last turn. */
+  notebooksAfter: Record<string, string>;
   /** `marimo export html` of the final notebook; null when it was not run. */
   notebookRun: { exitCode: number; stderr: string; seconds: number } | null;
 };
@@ -33,12 +37,25 @@ export function grade(scenario: Scenario, obs: Observation): Check[] {
     detail: obs.errors.length ? clip(obs.errors.join(" | ")) : undefined,
   });
 
-  // 2. The notebook: written, and it runs top to bottom.
+  // 2. The notebook: the active one written (and no other), and it runs top to bottom.
   const nb = scenario.notebook;
-  const after = obs.notebookAfter;
+  const after = obs.notebooksAfter[obs.activeNotebook] ?? null;
+  const before = obs.notebooksBefore[obs.activeNotebook] ?? null;
   if (nb.must_change) {
-    const changed = after !== null && after !== obs.notebookBefore;
+    const changed = after !== null && after !== before;
     checks.push({ name: "notebook_changed", pass: changed, detail: after === null ? "notebook missing" : changed ? undefined : "unchanged" });
+    // The scientist looks at the active notebook: work written elsewhere is
+    // work they do not see (the old /workspace/notebook.py, a new file, the
+    // project's other notebooks).
+    const others = otherNotebooksChanged(obs);
+    const pass = changed && others.length === 0;
+    checks.push({
+      name: "wrote_active_notebook",
+      pass,
+      detail: pass
+        ? undefined
+        : [changed ? null : `${obs.activeNotebook} not written`, others.length ? `also wrote ${others.join(", ")}` : null].filter(Boolean).join("; "),
+    });
   }
   if (nb.must_run) {
     const run = obs.notebookRun;
@@ -70,6 +87,13 @@ export function grade(scenario: Scenario, obs: Observation): Check[] {
     checks.push({ name: `answer:${k.name}`, pass, detail: pass ? undefined : `none of ${k.any.join(" / ")}` });
   }
   return checks;
+}
+
+/** Notebooks other than the active one that were created, changed or removed during the run. */
+export function otherNotebooksChanged(obs: Pick<Observation, "activeNotebook" | "notebooksBefore" | "notebooksAfter">): string[] {
+  const paths = new Set([...Object.keys(obs.notebooksBefore), ...Object.keys(obs.notebooksAfter)]);
+  paths.delete(obs.activeNotebook);
+  return [...paths].filter((p) => obs.notebooksBefore[p] !== obs.notebooksAfter[p]).sort();
 }
 
 /**

@@ -1,12 +1,14 @@
-// Drives one session over the bridge WebSocket (workbench docs/contracts.md
-// §1): sends the scenario's prompts one turn at a time, answers permission
-// requests like a user who always clicks "allow", and keeps every frame.
+// Drives one conversation over the bridge WebSocket (workbench
+// docs/contracts.md §1): creates a project for the scenario, opens its first
+// conversation, sends the scenario's prompts one turn at a time with the
+// active notebook, answers permission requests like a user who always clicks
+// "allow", and keeps every frame of the conversation.
 
 export type Frame = { type: string; id?: number; ts?: string; [key: string]: any };
 
 export type Turn = {
   prompt: string;
-  /** ACP stopReason, "error" from the bridge, or "timeout"/"disconnected" from us. */
+  /** ACP stopReason, "error" from the bridge, or "timeout"/"disconnected"/"refused" from us. */
   stopReason: string;
   /** Everything the agent said in this turn (agent_message_chunk text). */
   text: string;
@@ -20,8 +22,20 @@ export type PermissionRecord = {
   optionId: string;
 };
 
+/** Where the conversation happens: what `create` made and `open` opened. */
+export type Opened = {
+  /** The project's folder name, relative to the workspace root. */
+  project: string;
+  conversation: string;
+  /** The active notebook, relative to the project ("notebooks/analyse.py"). */
+  notebook: string;
+};
+
 export type SessionResult = {
-  sessionId: string | null;
+  opened: Opened;
+  /** The ACP session id from `hello`: "" until the conversation's first prompt. */
+  sessionId: string;
+  /** The conversation's frames (not the workspace-level `workspace`/`created` frames). */
   frames: Frame[];
   turns: Turn[];
   permissions: PermissionRecord[];
@@ -30,8 +44,16 @@ export type SessionResult = {
 
 type Options = {
   url: string;
+  /** Name of the project to create; the bridge may suffix it if taken. */
+  project: string;
+  /** Create this notebook in the project and make it the active one; else the project's first notebook. */
+  notebook?: string;
   prompts: string[];
   timeoutMs: number;
+  /** How long creating and opening the project may take. */
+  setupTimeoutMs?: number;
+  /** Awaited once the conversation is open, before the first prompt (to snapshot the notebooks). */
+  onOpen?: (opened: Opened) => Promise<void>;
   /** Called for every frame, for live progress. */
   onFrame?: (frame: Frame) => void;
 };
@@ -39,16 +61,30 @@ type Options = {
 /** How long to wait for turn_end after asking the agent to cancel. */
 const CANCEL_GRACE_MS = 15_000;
 
-export function runSession({ url, prompts, timeoutMs, onFrame }: Options): Promise<SessionResult> {
-  const result: SessionResult = { sessionId: null, frames: [], turns: [], permissions: [], errors: [] };
+/**
+ * Resolves with the conversation once every prompt's turn has ended (or timed
+ * out); rejects when the project could not be created and opened, which is a
+ * harness failure rather than the model's.
+ */
+export function runSession({ url, project, notebook, prompts, timeoutMs, setupTimeoutMs = 60_000, onOpen, onFrame }: Options): Promise<SessionResult> {
+  const result: SessionResult = {
+    opened: { project: "", conversation: "", notebook: "" },
+    sessionId: "",
+    frames: [],
+    turns: [],
+    permissions: [],
+    errors: [],
+  };
   const ws = new WebSocket(url);
+  // setup: waiting for the workspace, the project, the notebook, the hello.
+  let phase: "workspace" | "project" | "notebook" | "hello" | "turns" = "workspace";
   let turnIndex = -1;
   let turnStarted = 0;
   let text = "";
   let timer: ReturnType<typeof setTimeout> | undefined;
   let cancelled = false;
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let done = false;
     const finish = () => {
       if (done) return;
@@ -57,11 +93,20 @@ export function runSession({ url, prompts, timeoutMs, onFrame }: Options): Promi
       ws.close();
       resolve(result);
     };
+    const failSetup = (why: string) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      ws.close();
+      reject(new Error(`could not open a conversation: ${why}`));
+    };
+    const send = (frame: object) => ws.send(JSON.stringify(frame));
+    timer = setTimeout(() => failSetup(`no hello after ${setupTimeoutMs / 1000} s (waiting for ${phase})`), setupTimeoutMs);
 
     const endTurn = (stopReason: string) => {
       result.turns.push({ prompt: prompts[turnIndex]!, stopReason, text, seconds: (performance.now() - turnStarted) / 1000 });
       clearTimeout(timer);
-      if (stopReason === "timeout" || stopReason === "disconnected") return finish();
+      if (stopReason === "timeout" || stopReason === "disconnected" || stopReason === "refused") return finish();
       nextPrompt();
     };
 
@@ -71,7 +116,7 @@ export function runSession({ url, prompts, timeoutMs, onFrame }: Options): Promi
       text = "";
       cancelled = false;
       turnStarted = performance.now();
-      ws.send(JSON.stringify({ type: "prompt", text: prompts[turnIndex] }));
+      send({ type: "prompt", text: prompts[turnIndex], notebook: result.opened.notebook });
       timer = setTimeout(onTimeout, timeoutMs);
     };
 
@@ -81,23 +126,59 @@ export function runSession({ url, prompts, timeoutMs, onFrame }: Options): Promi
       if (!cancelled) {
         cancelled = true;
         result.errors.push(`turn ${turnIndex + 1} timed out after ${timeoutMs / 1000} s; cancelled`);
-        ws.send(JSON.stringify({ type: "cancel" }));
+        send({ type: "cancel" });
         timer = setTimeout(onTimeout, CANCEL_GRACE_MS);
         return;
       }
       endTurn("timeout");
     };
 
+    const open = () => {
+      phase = "hello";
+      send({ type: "open", project: result.opened.project, conversation: result.opened.conversation });
+    };
+
+    // Creating and opening the project, in the order the UI does it.
+    const setup = (frame: Frame) => {
+      if (frame.type === "refused") return failSetup(`refused while waiting for ${phase}: ${frame.message}`);
+      if (phase === "workspace" && frame.type === "workspace") {
+        phase = "project";
+        return send({ type: "create", kind: "project", name: project });
+      }
+      if (phase === "project" && frame.type === "created" && frame.kind === "project") {
+        result.opened = { project: frame.project, conversation: frame.conversation ?? "", notebook: frame.path ?? "" };
+        if (!result.opened.conversation) return failSetup("the created project has no conversation");
+        if (!notebook) {
+          if (!result.opened.notebook) return failSetup("the created project has no notebook");
+          return open();
+        }
+        phase = "notebook";
+        return send({ type: "create", kind: "notebook", project: result.opened.project, name: notebook });
+      }
+      if (phase === "notebook" && frame.type === "created" && frame.kind === "notebook") {
+        result.opened.notebook = frame.path ?? "";
+        return open();
+      }
+      if (phase === "hello" && frame.type === "hello") {
+        clearTimeout(timer);
+        phase = "turns";
+        result.sessionId = frame.session?.sessionId ?? "";
+        const start = () => {
+          if (!done) nextPrompt();
+        };
+        return void (onOpen ? onOpen(result.opened).then(start, (err) => failSetup((err as Error).message)) : start());
+      }
+      // Anything else (a `workspace` refresh after the project appeared) is not ours to act on.
+    };
+
     ws.onmessage = (event) => {
       if (done) return;
       const frame = JSON.parse(String(event.data)) as Frame;
       onFrame?.(frame);
-      if (frame.type === "hello") {
-        result.sessionId = frame.session?.sessionId ?? null;
-        // A fresh workspace has no turns, but a reconnect must not re-prompt.
-        if (turnIndex === -1) nextPrompt();
-        return;
-      }
+      if (phase !== "turns") return setup(frame);
+      // Workspace-level frames: every file the agent writes triggers a fresh
+      // `workspace`; they are not part of the conversation.
+      if (frame.type === "workspace" || frame.type === "created" || frame.type === "renamed") return;
       result.frames.push(frame);
       switch (frame.type) {
         case "update": {
@@ -113,11 +194,16 @@ export function runSession({ url, prompts, timeoutMs, onFrame }: Options): Promi
             kind: frame.toolCall?.kind ?? "",
             optionId: option,
           });
-          ws.send(JSON.stringify({ type: "permission", requestId: frame.requestId, optionId: option }));
+          send({ type: "permission", requestId: frame.requestId, optionId: option });
           return;
         }
         case "error":
           result.errors.push(String(frame.message));
+          return;
+        case "refused":
+          // A prompt the bridge would not take (e.g. a notebook not in the project): no turn will follow.
+          result.errors.push(`refused: ${frame.message}`);
+          if (turnIndex >= 0 && turnIndex < prompts.length) endTurn("refused");
           return;
         case "turn_end":
           if (turnIndex >= 0 && turnIndex < prompts.length) endTurn(cancelled ? "timeout" : String(frame.stopReason));
@@ -129,6 +215,7 @@ export function runSession({ url, prompts, timeoutMs, onFrame }: Options): Promi
     };
     ws.onclose = () => {
       if (done) return;
+      if (phase !== "turns") return failSetup(`the bridge closed the WebSocket while waiting for ${phase}`);
       if (turnIndex >= 0 && turnIndex < prompts.length) {
         result.errors.push("bridge closed the WebSocket during a turn");
         endTurn("disconnected");
@@ -162,4 +249,20 @@ export function toolStats(frames: Frame[]): ToolStats {
     if (c.status === "failed") failed++;
   }
   return { calls: calls.size, failed, byKind };
+}
+
+/**
+ * The skills the agent loaded (OpenCode's `skill` tool: the name is in the
+ * update's rawInput, and the completed call is titled "Loaded skill: <name>").
+ */
+export function skillsLoaded(frames: Frame[]): string[] {
+  const names = new Set<string>();
+  for (const f of frames) {
+    const u = f.type === "update" ? f.update : undefined;
+    if (!u || (u.sessionUpdate !== "tool_call" && u.sessionUpdate !== "tool_call_update")) continue;
+    if (u.title === "skill" && typeof u.rawInput?.name === "string") names.add(u.rawInput.name);
+    const loaded = typeof u.title === "string" ? u.title.match(/^Loaded skill: (.+)$/) : null;
+    if (loaded) names.add(loaded[1]!.trim());
+  }
+  return [...names].sort();
 }

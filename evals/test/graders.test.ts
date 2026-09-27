@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { frenchScore, grade, normalize, type Observation } from "../src/graders";
+import { frenchScore, grade, normalize, otherNotebooksChanged, type Observation } from "../src/graders";
 import { median, summarize, type RunRecord } from "../src/report";
 import { loadScenario, validateScenario } from "../src/scenario";
-import { pickAllow, toolStats } from "../src/session";
+import { pickAllow, skillsLoaded, toolStats } from "../src/session";
 
 const scenario = loadScenario(join(import.meta.dir, "..", "scenarios"), "tp53-r175h");
 
@@ -30,14 +30,22 @@ Li-Fraumeni. La littérature le décrit comme un point chaud et un mutant avec g
 fréquent dans les tumeurs et les souris qui le portent ont des cancers plus invasifs. Les sources sont
 dans le notebook, avec les liens vers les articles et les bases de données.`;
 
-function observation(over: Partial<Observation> = {}): Observation {
+const ACTIVE = "tp53-r175h/notebooks/analyse.py";
+const OTHER = "tp53-r175h/notebooks/brouillon.py";
+
+/** A run in a project with two notebooks, where the agent rewrote the active one. */
+function observation(over: Partial<Observation> & { notebookAfter?: string | null } = {}): Observation {
+  const { notebookAfter = GOOD_NOTEBOOK, ...rest } = over;
+  const after: Record<string, string> = { [OTHER]: "draft" };
+  if (notebookAfter !== null) after[ACTIVE] = notebookAfter;
   return {
     turns: [{ prompt: "p", stopReason: "end_turn", text: GOOD_ANSWER, seconds: 12 }],
     errors: [],
-    notebookBefore: "welcome",
-    notebookAfter: GOOD_NOTEBOOK,
+    activeNotebook: ACTIVE,
+    notebooksBefore: { [ACTIVE]: "welcome", [OTHER]: "draft" },
+    notebooksAfter: after,
     notebookRun: { exitCode: 0, stderr: "", seconds: 3 },
-    ...over,
+    ...rest,
   };
 }
 
@@ -64,6 +72,29 @@ describe("grade", () => {
     expect(missing).toContain("notebook_runs");
   });
 
+  test("writing another notebook, or a new one, fails wrote_active_notebook", () => {
+    const base = observation();
+    const other = grade(scenario, { ...base, notebooksAfter: { ...base.notebooksAfter, [OTHER]: GOOD_NOTEBOOK } });
+    expect(other.filter((c) => !c.pass).map((c) => c.name)).toEqual(["wrote_active_notebook"]);
+    expect(other.find((c) => c.name === "wrote_active_notebook")!.detail).toBe(`also wrote ${OTHER}`);
+
+    // The single notebook of the old contract, written instead of the active one.
+    const legacy = grade(scenario, { ...base, notebooksAfter: { ...base.notebooksBefore, "notebook.py": GOOD_NOTEBOOK } });
+    const check = legacy.find((c) => c.name === "wrote_active_notebook")!;
+    expect(check.pass).toBe(false);
+    expect(check.detail).toBe(`${ACTIVE} not written; also wrote notebook.py`);
+  });
+
+  test("otherNotebooksChanged sees created, changed and removed notebooks, not the active one", () => {
+    expect(
+      otherNotebooksChanged({
+        activeNotebook: "p/notebooks/a.py",
+        notebooksBefore: { "p/notebooks/a.py": "1", "p/notebooks/b.py": "1", "p/notebooks/c.py": "1" },
+        notebooksAfter: { "p/notebooks/a.py": "2", "p/notebooks/b.py": "2", "p/notebooks/d.py": "1" },
+      }),
+    ).toEqual(["p/notebooks/b.py", "p/notebooks/c.py", "p/notebooks/d.py"]);
+  });
+
   test("a notebook whose cells raise fails notebook_runs with the error in the detail", () => {
     const checks = grade(scenario, observation({ notebookRun: { exitCode: 1, stderr: "ValueError: boom\nError: some cells failed", seconds: 2 } }));
     const run = checks.find((c) => c.name === "notebook_runs")!;
@@ -74,6 +105,12 @@ describe("grade", () => {
   test("notebook content checks are the scenario's regexes", () => {
     const noViewers = GOOD_NOTEBOOK.replace("import atlas_viewers as av", "import pandas as pd").replace(/av\.structure[^\n]*/, "pd.DataFrame()");
     expect(failed(observation({ notebookAfter: noViewers }))).toEqual(["nb:uses_atlas_viewers", "nb:structure_viewer", "nb:highlights_175"]);
+  });
+
+  test("the residue may be highlighted through a name bound to it", () => {
+    const named = GOOD_NOTEBOOK.replace("highlight=[175], labels={175:", "highlight=[POSITION], labels={POSITION:").replace("    import requests", "    import requests\n    POSITION = 175");
+    expect(failed(observation({ notebookAfter: named }))).toEqual([]);
+    expect(failed(observation({ notebookAfter: named.replace("POSITION = 175", "POSITION = 176") }))).toEqual(["nb:highlights_175"]);
   });
 
   test("an English answer fails the language check", () => {
@@ -104,6 +141,26 @@ test("validateScenario rejects a bad regex and duplicate names", () => {
   expect(() => validateScenario({ id: "x", prompts: [] }, "x")).toThrow(/prompts/);
 });
 
+test("validateScenario takes an optional notebook name and rejects the old fixed path", () => {
+  expect(validateScenario({ id: "x", prompts: ["p"] }, "x").notebook.name).toBeUndefined();
+  expect(validateScenario({ id: "x", prompts: ["p"], notebook: { name: " Structure BRCA1 " } }, "x").notebook.name).toBe("Structure BRCA1");
+  expect(() => validateScenario({ id: "x", prompts: ["p"], notebook: { path: "/workspace/notebook.py" } }, "x")).toThrow(/notebook\.path/);
+  expect(() => validateScenario({ id: "x", prompts: ["p"], notebook: { name: "" } }, "x")).toThrow(/notebook\.name/);
+});
+
+test("skillsLoaded reads OpenCode's skill tool calls", () => {
+  const u = (update: object) => ({ type: "update", update });
+  expect(
+    skillsLoaded([
+      u({ sessionUpdate: "tool_call", toolCallId: "1", title: "skill", rawInput: {} }),
+      u({ sessionUpdate: "tool_call_update", toolCallId: "1", title: "skill", rawInput: { name: "atlas-viewers" } }),
+      u({ sessionUpdate: "tool_call_update", toolCallId: "1", title: "Loaded skill: atlas-viewers" }),
+      u({ sessionUpdate: "tool_call_update", toolCallId: "2", title: "Loaded skill: clinical-trials" }),
+      u({ sessionUpdate: "tool_call", toolCallId: "3", title: "read", rawInput: { filePath: "skill.md" } }),
+    ]),
+  ).toEqual(["atlas-viewers", "clinical-trials"]);
+});
+
 test("pickAllow prefers allow_once", () => {
   expect(pickAllow([{ optionId: "always", kind: "allow_always" }, { optionId: "once", kind: "allow_once" }, { optionId: "no", kind: "reject_once" }])).toBe("once");
   expect(pickAllow([])).toBe("cancelled");
@@ -132,7 +189,7 @@ test("summarize ranks models by pass rate", () => {
     pass,
     failure: pass ? null : "notebook_runs",
     checks: [{ name: "notebook_runs", pass }],
-    metrics: { startup_s: 5, wall_s: wall, turns: [], tool_calls: 3, tool_calls_failed: 0, tool_calls_by_kind: {}, permissions: [], tokens: null },
+    metrics: { startup_s: 5, wall_s: wall, turns: [], tool_calls: 3, tool_calls_failed: 0, tool_calls_by_kind: {}, permissions: [], skills: ["atlas-viewers"], tokens: null },
     errors: [],
     answer: "",
     artifacts: "",
@@ -140,6 +197,7 @@ test("summarize ranks models by pass rate", () => {
   const md = summarize([rec("weak", false, 10), rec("strong", true, 20), rec("strong", true, 40)], "s");
   const lines = md.split("\n");
   expect(lines[4]).toStartWith("| strong | 2/2 | 100 % | 30 s |");
+  expect(lines[4]).toContain("| atlas-viewers (2/2) |");
   expect(lines[5]).toContain("notebook_runs (1/1)");
   expect(median([3, null, 1, 2])).toBe(2);
 });

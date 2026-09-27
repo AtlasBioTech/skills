@@ -27,7 +27,12 @@ export type Scenario = {
   /** Per prompt, from sending it to turn_end. */
   timeout_s: number;
   notebook: {
-    path: string;
+    /**
+     * The active notebook: created in the scenario's project under this name
+     * (slugged by the bridge) and sent with every prompt. When absent, the
+     * project's first notebook (notebooks/analyse.py).
+     */
+    name?: string;
     must_change: boolean;
     must_run: boolean;
     run_timeout_s: number;
@@ -63,6 +68,9 @@ export function validateScenario(raw: unknown, where: string): Scenario {
     fail("`prompts` must be a non-empty list of strings");
 
   const nb = s.notebook ?? {};
+  // Before projects, the workspace had one notebook at a fixed path.
+  if (nb.path !== undefined) fail("`notebook.path` is gone: the notebook is the project's active one; set `notebook.name` to create another");
+  if (nb.name !== undefined && (typeof nb.name !== "string" || !nb.name.trim())) fail("`notebook.name` must be a non-empty string");
   const answer = s.answer ?? {};
   if (answer.language !== undefined && answer.language !== "fr") fail("`answer.language` supports only fr");
 
@@ -89,7 +97,7 @@ export function validateScenario(raw: unknown, where: string): Scenario {
     prompts: s.prompts.map((p: string) => p.trim()),
     timeout_s: Number(s.timeout_s ?? 600),
     notebook: {
-      path: nb.path ?? "/workspace/notebook.py",
+      name: nb.name?.trim(),
       must_change: nb.must_change ?? true,
       must_run: nb.must_run ?? true,
       run_timeout_s: Number(nb.run_timeout_s ?? 300),
