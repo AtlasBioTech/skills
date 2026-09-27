@@ -1,0 +1,42 @@
+# The Workbench's « Structure » suggestion card (ui/src/components/chat/
+# EmptyState.tsx): the 3D structure of BRCA1 with its main functional domains.
+# A run passes when the notebook fetches BRCA1's canonical entry, shows the
+# structure with the Workbench viewer, and the answer names the RING and BRCT
+# domains, in French. Format: see ../README.md.
+id: brca1-structure
+title: BRCA1 — structure 3D et domaines fonctionnels
+
+prompts:
+  - Montre-moi la structure 3D de BRCA1 et situe ses principaux domaines fonctionnels.
+
+timeout_s: 900
+
+notebook:
+  must_change: true
+  must_run: true
+  run_timeout_s: 300
+  checks:
+    - name: uniprot_accession
+      why: the analysis is anchored on the canonical human BRCA1 entry
+      pattern: 'P38398'
+    - name: fetches_public_data
+      why: domains and structure come from a live UniProt/EBI/RCSB query, not from memory
+      pattern: 'https?://(rest\.uniprot\.org|www\.ebi\.ac\.uk|alphafold\.ebi\.ac\.uk|files\.rcsb\.org|models\.rcsb\.org|data\.rcsb\.org)'
+    - name: uses_atlas_viewers
+      why: results are shown with the Workbench viewers
+      pattern: '^\s*(import atlas_viewers|from atlas_viewers import)'
+      flags: im
+    - name: structure_viewer
+      why: the 3D structure is displayed
+      pattern: '\b(av|atlas_viewers)\.structure\('
+    - name: domains_in_notebook
+      why: the notebook itself locates the domains, not only the chat
+      pattern: 'RING[\s\S]*BRCT|BRCT[\s\S]*RING'
+
+answer:
+  language: fr
+  keywords:
+    - name: ring_domain
+      any: ["RING"]
+    - name: brct_domain
+      any: ["BRCT"]

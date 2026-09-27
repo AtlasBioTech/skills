@@ -1,0 +1,40 @@
+# The Workbench's « Littérature » suggestion card (ui/src/components/chat/
+# EmptyState.tsx): recent clinical trials of KRAS G12C inhibitors in lung
+# cancer. A run passes when the notebook queries a trial or literature
+# registry about lung cancer, shows the trials in a table, and the answer names
+# the two approved inhibitors, in French. Format: see ../README.md.
+id: kras-g12c-trials
+title: KRAS G12C — essais cliniques dans le cancer du poumon
+
+prompts:
+  - Résume les essais cliniques récents sur les inhibiteurs de KRAS G12C dans le cancer du poumon.
+
+timeout_s: 900
+
+notebook:
+  must_change: true
+  must_run: true
+  run_timeout_s: 300
+  checks:
+    - name: queries_registry
+      why: the trials come from a live ClinicalTrials.gov or Europe PMC query, not from memory
+      pattern: 'https?://(clinicaltrials\.gov/api|www\.ebi\.ac\.uk/europepmc)'
+    - name: shows_table
+      why: the trials are listed in a table the scientist can sort and open
+      pattern: '\b(av|atlas_viewers)\.table\(|\bmo\.ui\.(table|dataframe)\('
+    - name: sotorasib_in_notebook
+      why: the notebook covers the approved inhibitors, not only the chat
+      pattern: 'sotorasib'
+    - name: adagrasib_in_notebook
+      pattern: 'adagrasib'
+    - name: lung_cancer_query
+      why: the search is about lung cancer (the answer may take it as read, the notebook may not)
+      pattern: 'lung|NSCLC'
+
+answer:
+  language: fr
+  keywords:
+    - name: sotorasib
+      any: ["sotorasib", "Lumakras", "AMG 510", "AMG-510"]
+    - name: adagrasib
+      any: ["adagrasib", "Krazati", "MRTX849"]
