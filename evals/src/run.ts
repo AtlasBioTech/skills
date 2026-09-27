@@ -64,7 +64,7 @@ export async function runOne(cfg: RunConfig): Promise<RunRecord> {
     record.metrics.startup_s = round((performance.now() - t0) / 1000);
     log(`workspace ready in ${record.metrics.startup_s} s`);
 
-    let notebooksBefore: Record<string, string> = {};
+    let before: Snapshot = { notebooks: {}, context: null };
     const t1 = performance.now();
     const session = await runSession({
       url: `ws://${name}:${cfg.bridgePort}/ws`,
@@ -74,7 +74,7 @@ export async function runOne(cfg: RunConfig): Promise<RunRecord> {
       timeoutMs: scenario.timeout_s * 1000,
       onOpen: async (opened) => {
         log(`opened ${opened.project}/${opened.notebook}, conversation ${opened.conversation}`);
-        notebooksBefore = await notebooksIn(name);
+        before = await snapshot(name, opened.project);
       },
       onFrame: (f) => logFrame(f, log),
     });
@@ -84,12 +84,22 @@ export async function runOne(cfg: RunConfig): Promise<RunRecord> {
     const activeNotebook = `${project}/${notebook}`;
     record.project = project;
     record.notebook = notebook;
-    const notebooksAfter = await notebooksIn(name);
+    const after = await snapshot(name, project);
+    const notebooksAfter = after.notebooks;
     const notebookAfter = notebooksAfter[activeNotebook] ?? null;
     const notebookRun = scenario.notebook.must_run && notebookAfter !== null ? await runNotebook(name, activeNotebook, scenario) : null;
     if (notebookRun) log(`notebook ${notebookRun.exitCode === 0 ? "runs" : `fails (exit ${notebookRun.exitCode})`} in ${round(notebookRun.seconds)} s`);
 
-    const obs: Observation = { turns: session.turns, errors: session.errors, activeNotebook, notebooksBefore, notebooksAfter, notebookRun };
+    const obs: Observation = {
+      turns: session.turns,
+      errors: session.errors,
+      activeNotebook,
+      notebooksBefore: before.notebooks,
+      notebooksAfter,
+      contextBefore: before.context,
+      contextAfter: after.context,
+      notebookRun,
+    };
     record.checks = grade(scenario, obs);
     fillMetrics(record, session);
     record.metrics.tokens = await tokensOf(name, project, conversation);
@@ -141,13 +151,18 @@ async function runNotebook(name: string, notebook: string, scenario: Scenario): 
   };
 }
 
-// Every notebook of the workspace, to tell which ones the agent wrote: the
-// .py files in a notebooks/ folder, and any other marimo file (the agent may
-// write one at the project's root or at the workspace's). Hidden folders
-// (skills, .atlas state) are not the scientist's notebooks.
-const NOTEBOOKS_PY = `
-import json, os
+// What the agent may write that the graders look at: every notebook of the
+// workspace (the .py files in a notebooks/ folder, and any other marimo file:
+// the agent may write one at the project's root or at the workspace's;
+// hidden folders, i.e. skills and .atlas state, are not the scientist's
+// notebooks), and the project's PROJET.md.
+const SNAPSHOT_PY = `
+import json, os, sys
 root = "/workspace"
+try:
+    context = open(os.path.join(root, sys.argv[1], "PROJET.md"), encoding="utf-8").read()
+except FileNotFoundError:
+    context = None
 found = {}
 for dirpath, dirnames, filenames in os.walk(root):
     dirnames[:] = [d for d in dirnames if not d.startswith(".")]
@@ -161,13 +176,15 @@ for dirpath, dirnames, filenames in os.walk(root):
             continue
         if os.path.basename(dirpath) == "notebooks" or "marimo.App(" in text:
             found[os.path.relpath(path, root)] = text
-print(json.dumps(found))
+print(json.dumps({"notebooks": found, "context": context}))
 `;
 
-async function notebooksIn(name: string): Promise<Record<string, string>> {
-  const res = await execIn(name, ["python", "-c", NOTEBOOKS_PY], 30_000);
-  if (res.exitCode !== 0) throw new Error(`listing the notebooks failed: ${res.stderr.trim().slice(-300)}`);
-  return JSON.parse(res.stdout) as Record<string, string>;
+type Snapshot = { notebooks: Record<string, string>; context: string | null };
+
+async function snapshot(name: string, project: string): Promise<Snapshot> {
+  const res = await execIn(name, ["python", "-c", SNAPSHOT_PY, project], 30_000);
+  if (res.exitCode !== 0) throw new Error(`reading the notebooks failed: ${res.stderr.trim().slice(-300)}`);
+  return JSON.parse(res.stdout) as Snapshot;
 }
 
 // OpenCode keeps per-message token counts in its SQLite store, under the

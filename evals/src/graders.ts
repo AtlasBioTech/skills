@@ -16,6 +16,9 @@ export type Observation = {
   notebooksBefore: Record<string, string>;
   /** …and after the last turn. */
   notebooksAfter: Record<string, string>;
+  /** The project's PROJET.md at the same two moments (null: absent). */
+  contextBefore: string | null;
+  contextAfter: string | null;
   /** `marimo export html` of the final notebook; null when it was not run. */
   notebookRun: { exitCode: number; stderr: string; seconds: number } | null;
 };
@@ -70,6 +73,15 @@ export function grade(scenario: Scenario, obs: Observation): Check[] {
     const pass = after !== null && new RegExp(c.pattern, c.flags ?? "i").test(after);
     checks.push({ name: `nb:${c.name}`, pass, detail: pass ? undefined : `no match for /${c.pattern}/` });
   }
+
+  // PROJET.md is the scientist's: AGENTS.md lets the agent change it only when
+  // asked, and no scenario asks (yet).
+  const contextKept = obs.contextAfter === obs.contextBefore;
+  checks.push({
+    name: "project_context_untouched",
+    pass: contextKept,
+    detail: contextKept ? undefined : obs.contextAfter === null ? "PROJET.md removed" : "PROJET.md edited without being asked",
+  });
 
   // 3. The answer the scientist reads in the chat (the last turn's text).
   const answer = last?.text ?? "";

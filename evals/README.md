@@ -28,12 +28,12 @@ For each model × run, the runner:
    project named after the scenario id, takes the `created` frame's first
    notebook and conversation (or creates the scenario's `notebook.name` and
    makes it the active one), `open`s the conversation, and snapshots every
-   notebook of the workspace;
+   notebook of the workspace and the project's `PROJET.md`;
 4. sends each prompt with `notebook` set to the active notebook and keeps
    every frame of the conversation until `turn_end`; permission requests are
    **approved** (`allow_once`) and recorded; a turn that exceeds the
    scenario's timeout is cancelled, then graded as it stands;
-5. snapshots the notebooks again, reads the active one
+5. snapshots them again, reads the active one
    (`/workspace/<project>/notebooks/<active>.py`) and executes it with
    `marimo export html` inside the container;
 6. grades, saves the artifacts, removes the container.
@@ -136,6 +136,7 @@ All deterministic (no LLM judge), in [`src/graders.ts`](src/graders.ts):
 | `no_errors` | the bridge sent no `error` frame and nothing timed out |
 | `notebook_changed` | the active notebook exists and differs from the one before the first prompt |
 | `wrote_active_notebook` | the active notebook changed and no other notebook did: none of the project's other notebooks, no new one, no `notebook.py` at the root as before projects (a notebook is a `.py` in a `notebooks/` folder or any marimo file outside hidden folders) |
+| `project_context_untouched` | the project's `PROJET.md` is as it was before the first prompt: it is the scientist's, and the agent changes it only when asked (workbench `AGENTS.md`) |
 | `notebook_runs` | `marimo export html` of the active notebook exits 0 within `run_timeout_s`, i.e. every cell ran without raising (it executes all cells in dependency order, like opening the notebook; the detail quotes the error) |
 | `nb:<name>` | the active notebook matches the scenario's regex |
 | `answer_french` | the last turn's text is French: ≥ 10 French function words and more than twice as many as English ones |

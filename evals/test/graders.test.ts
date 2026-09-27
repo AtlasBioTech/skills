@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { frenchScore, grade, normalize, otherNotebooksChanged, type Observation } from "../src/graders";
 import { median, summarize, type RunRecord } from "../src/report";
@@ -44,6 +45,8 @@ function observation(over: Partial<Observation> & { notebookAfter?: string | nul
     activeNotebook: ACTIVE,
     notebooksBefore: { [ACTIVE]: "welcome", [OTHER]: "draft" },
     notebooksAfter: after,
+    contextBefore: "# tp53-r175h\n",
+    contextAfter: "# tp53-r175h\n",
     notebookRun: { exitCode: 0, stderr: "", seconds: 3 },
     ...rest,
   };
@@ -83,6 +86,10 @@ describe("grade", () => {
     const check = legacy.find((c) => c.name === "wrote_active_notebook")!;
     expect(check.pass).toBe(false);
     expect(check.detail).toBe(`${ACTIVE} not written; also wrote notebook.py`);
+  });
+
+  test("editing PROJET.md unasked fails project_context_untouched", () => {
+    expect(failed(observation({ contextAfter: "# tp53-r175h\n\n## Question de recherche\nTP53" }))).toEqual(["project_context_untouched"]);
   });
 
   test("otherNotebooksChanged sees created, changed and removed notebooks, not the active one", () => {
@@ -139,6 +146,13 @@ test("validateScenario rejects a bad regex and duplicate names", () => {
     validateScenario({ id: "x", prompts: ["p"], notebook: { checks: [{ name: "a", pattern: "a" }] }, answer: { keywords: [{ name: "a", any: ["a"] }] } }, "x"),
   ).toThrow(/used twice/);
   expect(() => validateScenario({ id: "x", prompts: [] }, "x")).toThrow(/prompts/);
+});
+
+test("every scenario in scenarios/ loads, and its id is its file name", () => {
+  const dir = join(import.meta.dir, "..", "scenarios");
+  const ids = readdirSync(dir).filter((f) => f.endsWith(".yaml")).map((f) => f.replace(/\.yaml$/, ""));
+  expect(ids.length).toBeGreaterThan(0);
+  for (const id of ids) expect(loadScenario(dir, id).id).toBe(id);
 });
 
 test("validateScenario takes an optional notebook name and rejects the old fixed path", () => {
