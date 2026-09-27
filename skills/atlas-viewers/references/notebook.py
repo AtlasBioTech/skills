@@ -37,6 +37,21 @@ def _(requests):
     GENE = "KRAS"
     VARIANT = "G12D"
     RESIDUE = 12
+
+    # An accession typed from memory can be another protein's, and every cell
+    # below would then show that protein under this gene's name: check it
+    # against UniProt's reviewed human entry for the gene first.
+    try:
+        _found = [
+            hit["primaryAccession"]
+            for hit in get_json(
+                "https://rest.uniprot.org/uniprotkb/search",
+                params={"query": f"gene_exact:{GENE} AND organism_id:9606 AND reviewed:true", "fields": "accession", "format": "json"},
+            )["results"]
+        ]
+    except requests.RequestException:
+        _found = None  # UniProt unreachable: the next cell says so
+    assert _found is None or ACCESSION in _found, f"{ACCESSION} n'est pas {GENE} humaine dans UniProt ; l'accession de {GENE} est {_found}"
     return ACCESSION, GENE, RESIDUE, VARIANT, get_json
 
 

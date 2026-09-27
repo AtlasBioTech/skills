@@ -56,6 +56,7 @@ Where the data comes from:
 
 | What | Call |
 |---|---|
+| Gene → UniProt accession | `GET https://rest.uniprot.org/uniprotkb/search?query=gene_exact:{GENE} AND organism_id:9606 AND reviewed:true&fields=accession&format=json` → `results[0].primaryAccession`. Never type an accession from memory without this check (the reference notebook does it) |
 | Protein length, domains, function | `GET https://rest.uniprot.org/uniprotkb/{accession}.json` → `sequence.length`, `features` (types Domain, Region, Motif, DNA binding, Zinc finger) |
 | AlphaFold model | `GET https://alphafold.ebi.ac.uk/api/prediction/{accession}` → `[0]["cifUrl"]` (never hard-code the model version) |
 | ClinVar variants | `esearch.fcgi?db=clinvar&term={GENE}[gene] AND single_gene[prop] AND missense_variant[molecular_consequence]&retmode=json`, then `esummary.fcgi?db=clinvar&id=…` (≤ 400 ids per call); protein change in `title`, class in `germline_classification.description` |
@@ -65,7 +66,8 @@ Where the data comes from:
 
 Read [`references/notebook.py`](references/notebook.py): a complete notebook
 (KRAS p.G12D) that runs as is. For another protein, copy its cells and change
-the accession, the gene, the variant and the residue numbers; keep the
+the gene, its accession (look it up, see above: a wrong one shows another
+protein), the variant and the residue numbers; keep the
 structure: question → protein (UniProt) → 3D structure → ClinVar variants
 plot and table → literature → **facts** → sources.
 
