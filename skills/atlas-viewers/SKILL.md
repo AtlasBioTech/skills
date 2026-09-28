@@ -57,10 +57,11 @@ Where the data comes from:
 | What | Call |
 |---|---|
 | Gene → UniProt accession | `GET https://rest.uniprot.org/uniprotkb/search?query=gene_exact:{GENE} AND organism_id:9606 AND reviewed:true&fields=accession&format=json` → `results[0].primaryAccession`. Never type an accession from memory without this check (the reference notebook does it) |
-| Protein length, domains, function | `GET https://rest.uniprot.org/uniprotkb/{accession}.json` → `sequence.length`, `features` (types Domain, Region, Motif, DNA binding, Zinc finger) |
+| Protein length, domains, function | `GET https://rest.uniprot.org/uniprotkb/{accession}.json` → `sequence.length`, `features` (types Domain, Region, Motif, DNA binding, Zinc finger), `comments[commentType=FUNCTION]`, the gene's HGNC id in `uniProtKBCrossReferences[database=HGNC]` |
 | AlphaFold model | `GET https://alphafold.ebi.ac.uk/api/prediction/{accession}` → `[0]["cifUrl"]` (never hard-code the model version) |
 | ClinVar variants | `esearch.fcgi?db=clinvar&term={GENE}[gene] AND single_gene[prop] AND missense_variant[molecular_consequence]&retmode=json`, then `esummary.fcgi?db=clinvar&id=…` (≤ 400 ids per call); protein change in `title`, class in `germline_classification.description` |
-| Literature | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=…&format=json&sort=CITED desc` |
+| Literature | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=…&format=json&sort=CITED desc&resultType=core` → `abstractText`, `isOpenAccess`, `pmcid` (`lite` has no abstract) |
+| Full text (open access only) | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML` → JATS XML, `body/sec` with `sec-type` results, discussion. Only when `isOpenAccess == "Y"`: the others fail after seconds |
 
 ## Recipe
 
@@ -81,14 +82,39 @@ also `print`s it, so `python notebook.py` shows it to you:
   the conditions it is reported for;
 - how many pathogenic variants sit at the same residue (several = a
   mutational hotspot);
-- how many articles mention the variant.
+- how many articles mention the variant;
+- the gene and the protein, named apart with their identifiers (HGNC,
+  UniProt), and UniProt's Function sentence: the definition you give;
+- for each paper: what was read (`titre`, `résumé`, `texte intégral`) and
+  the sentence that names the variant.
 
 ## Answer from the data
 
 Your chat answer states these facts with their numbers and sources, in
 French, as found by the notebook — not from memory and not hedged with
-"généralement". Add what the literature says (the most cited articles) and
-the clinical context (the conditions ClinVar lists for the variant).
+"généralement". Add what the literature says and the clinical context (the
+conditions ClinVar lists for the variant). Follow the `scientific-rigor`
+skill for how to word it.
+
+## Literature: read before you conclude
+
+The literature table has a **« lu »** column (`titre`, `résumé`, `texte
+intégral`) and an **Extrait**: the sentence of the abstract that names the
+variant and its conclusion, or the sentences of the full text's results and
+discussion that name it.
+
+- **Never conclude from a title.** A paper whose « lu » is `titre` is only a
+  pointer: list it, claim nothing from it.
+- **Say what was read**: « d'après le résumé », « d'après le texte
+  intégral (résultats) ».
+- **Quote or paraphrase the sentence** that supports a claim, with the
+  citation (first author, journal, year, PMID).
+- Give the **experimental level** the sentence describes: in vitro, lignée
+  cellulaire, souris, cohorte humaine, essai clinique. A mouse result is a
+  mouse result.
+- A paper you want to cite that the search did not return: fetch it in the
+  notebook by PMID (`query=EXT_ID:{pmid} AND SRC:MED`) so its abstract is
+  shown too. Never cite from memory.
 
 ## Before you end your turn
 

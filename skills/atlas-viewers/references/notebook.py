@@ -6,13 +6,15 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
+    import re
+
     import marimo as mo
     import pandas as pd
     import requests
 
     import atlas_viewers as av
 
-    return av, mo, pd, requests
+    return av, mo, pd, re, requests
 
 
 @app.cell
@@ -64,8 +66,8 @@ def _(mo):
 
 
 @app.cell
-def _(ACCESSION, RESIDUE, get_json, mo):
-    # Length, regions and sites come from UniProt, not from memory.
+def _(ACCESSION, GENE, RESIDUE, get_json, mo, re):
+    # Length, regions, sites and the definition come from UniProt, not from memory.
     try:
         uniprot = get_json(f"https://rest.uniprot.org/uniprotkb/{ACCESSION}.json")
     except Exception as _err:  # a failed request is shown, the notebook keeps running
@@ -97,12 +99,25 @@ def _(ACCESSION, RESIDUE, get_json, mo):
         if _f["type"] in ("Binding site", "Active site", "Site")
         and abs(_f["location"]["start"]["value"] - RESIDUE) <= 5
     ]
+    # The definition the answer gives: the gene (HGNC) and the protein (UniProt)
+    # named separately, with their identifiers, and the function as UniProt's
+    # curators wrote it (first sentence, PubMed citations dropped).
+    definition = []
+    if uniprot:
+        _hgnc = next((_x["id"] for _x in uniprot.get("uniProtKBCrossReferences", []) if _x["database"] == "HGNC"), "HGNC non trouvé")
+        _function = next((_c["texts"][0]["value"] for _c in uniprot.get("comments", []) if _c["commentType"] == "FUNCTION"), "")
+        _function = re.split(r"(?<=\.)\s+", re.sub(r"\s*\((?:PubMed|ECO|By similarity)[^)]*\)", "", _function))[0]
+        definition = [
+            f"Gène {GENE} ({_hgnc}) ; protéine {uniprot['proteinDescription']['recommendedName']['fullName']['value']} "
+            f"(UniProt {ACCESSION}), {length} acides aminés",
+            f"Fonction (UniProt, commentaire Function) : {_function or 'non renseignée'}",
+        ]
     _out if _out is not None else mo.md(
-        f"**{uniprot['proteinDescription']['recommendedName']['fullName']['value']}**, "
-        f"{length} acides aminés ([{ACCESSION}](https://www.uniprot.org/uniprotkb/{ACCESSION}/entry)). "
+        "\n\n".join(definition)
+        + f" ([fiche UniProt](https://www.uniprot.org/uniprotkb/{ACCESSION}/entry))\n\n"
         + "Régions : " + ", ".join(f"{d['name']} ({d['start']}–{d['end']})" for d in domains)
     )
-    return domains, length, sites
+    return definition, domains, length, sites
 
 
 @app.cell
@@ -143,10 +158,8 @@ def _(mo):
 
 
 @app.cell
-def _(GENE, get_json, pd):
+def _(GENE, get_json, pd, re):
     # ClinVar through NCBI E-utilities: esearch gives the ids, esummary the records.
-    import re
-
     _EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
     _AA = {
         "Ala": "A", "Arg": "R", "Asn": "N", "Asp": "D", "Cys": "C", "Gln": "Q", "Glu": "E",
@@ -235,45 +248,121 @@ def _(mo):
 
 
 @app.cell
-def _(GENE, VARIANT, av, get_json, mo, pd):
-    literature_count = None
+def _(GENE, VARIANT, get_json, pd, re, requests):
+    # A title is not evidence: keep each paper's abstract and, for the
+    # open-access ones, the full text's results and discussion. "lu" says
+    # which of the three the excerpt comes from, so the answer can say what
+    # was read and quote the sentence a claim rests on.
+    import xml.etree.ElementTree as ET
+    from concurrent.futures import ThreadPoolExecutor
+
+    _EPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest"
+    _SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-Z(])")
+
+    def _clean(text):
+        return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text or "")).strip()
+
+    def _excerpt(text, conclusion=True):
+        # The first sentences naming the variant and, for an abstract, its
+        # last one (the conclusion): what the paper did and what it found.
+        _sentences = _SENTENCE.split(text)
+        _picked = [_s for _s in _sentences if VARIANT in _s][: 1 if conclusion else 2]
+        if conclusion and _sentences and _sentences[-1] not in _picked:
+            _picked.append(_sentences[-1])
+        return " […] ".join(_picked)[:600]
+
+    def _full_text(pmcid):
+        # Results and discussion sections of an open-access article; "" when
+        # it cannot be had quickly (the abstract is used instead).
+        try:
+            # Not get_json: asked for JSON, Europe PMC refuses the XML (406).
+            _response = requests.get(f"{_EPMC}/{pmcid}/fullTextXML", timeout=20)
+            _response.raise_for_status()
+            _body = ET.fromstring(_response.content).find("body")
+        except (requests.RequestException, ET.ParseError):
+            return ""
+        def _prose(node):
+            # Text without the figures and tables, which JATS may nest in a paragraph.
+            return (node.text or "") + "".join(
+                ("" if _c.tag in ("fig", "table-wrap") else _prose(_c)) + (_c.tail or "") for _c in node
+            )
+
+        def _paragraphs(sec):
+            # The section's own paragraphs and its subsections'.
+            for _child in sec:
+                if _child.tag == "p":
+                    yield _prose(_child)
+                elif _child.tag == "sec":
+                    yield from _paragraphs(_child)
+
+        _sections = [
+            _sec for _sec in (_body.findall("sec") if _body is not None else [])
+            if re.search(r"result|discussion", f"{_sec.get('sec-type', '')} {_sec.findtext('title') or ''}", re.I)
+        ]
+        return _clean(" ".join(_p for _sec in _sections for _p in _paragraphs(_sec)))
+
+    papers, literature_count, literature_error = pd.DataFrame(), None, None
     try:
         _found = get_json(
-            "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
+            f"{_EPMC}/search",
             {
                 "query": f'(TITLE:"{VARIANT}" OR ABSTRACT:"{VARIANT}") AND {GENE}',
                 "format": "json",
                 "pageSize": 8,
                 "sort": "CITED desc",
-                "resultType": "lite",
+                "resultType": "core",  # "lite" has no abstract
             },
         )
-        _papers = pd.DataFrame(
-            [
+        literature_count = int(_found["hitCount"])
+        _hits = _found["resultList"]["result"]
+        # Only open-access articles have their full text in Europe PMC (the
+        # others answer with an error after seconds); fetched in parallel,
+        # ~5 s each, at most the 8 papers above.
+        _open = [_r["pmcid"] for _r in _hits if _r.get("isOpenAccess") == "Y" and _r.get("pmcid")]
+        with ThreadPoolExecutor(max_workers=4) as _pool:
+            _bodies = dict(zip(_open, _pool.map(_full_text, _open)))
+        _rows = []
+        for _r in _hits:
+            _abstract, _body = _clean(_r.get("abstractText")), _bodies.get(_r.get("pmcid"), "")
+            _lu = "texte intégral" if _body else "résumé" if _abstract else "titre"
+            _rows.append(
                 {
-                    "Titre": _r.get("title", ""),
-                    "Revue": _r.get("journalTitle", ""),
+                    "Titre": _clean(_r.get("title")),
+                    "Premier auteur": (_r.get("authorString") or "").split(",")[0],
+                    "Revue": _r.get("journalInfo", {}).get("journal", {}).get("isoabbreviation", ""),
                     "Année": _r.get("pubYear", ""),
                     "Citations": _r.get("citedByCount", 0),
+                    "lu": _lu,
+                    "Extrait": (_excerpt(_body, conclusion=False) if _body else "") or _excerpt(_abstract),
                     "pmid": _r.get("pmid", ""),
                 }
-                for _r in _found["resultList"]["result"]
-            ]
-        )
-        literature_count = int(_found["hitCount"])
-        _view = av.table(
-            _papers,
-            links={"PubMed": "https://pubmed.ncbi.nlm.nih.gov/{pmid}/"},
-            title=f"{_found['hitCount']} articles sur {GENE} {VARIANT}, les plus cités",
-        )
+            )
+        papers = pd.DataFrame(_rows)
     except Exception as _err:
-        _view = mo.callout(mo.md(f"Europe PMC injoignable : {_err}"), kind="warn")
-    _view
-    return (literature_count,)
+        literature_error = str(_err)
+    return literature_count, literature_error, papers
 
 
 @app.cell
-def _(RESIDUE, VARIANT, clinvar, domains, literature_count, mo, sites):
+def _(GENE, VARIANT, av, literature_count, literature_error, mo, papers):
+    mo.stop(literature_error is not None, mo.callout(mo.md(f"Europe PMC injoignable : {literature_error}"), kind="warn"))
+    mo.vstack([
+        mo.md(
+            f"**{literature_count} articles** sur {GENE} {VARIANT}, les plus cités. « lu » dit ce qui a été lu "
+            "de chacun (titre, résumé, texte intégral en accès libre) ; l'extrait cite les phrases qui nomment le variant "
+            "(et la conclusion, pour un résumé)."
+        ),
+        av.table(
+            papers,
+            links={"PubMed": "https://pubmed.ncbi.nlm.nih.gov/{pmid}/"},
+            title=f"Littérature sur {GENE} {VARIANT} (Europe PMC)",
+        ),
+    ])
+    return
+
+
+@app.cell
+def _(RESIDUE, VARIANT, clinvar, definition, domains, literature_count, mo, papers, sites):
     # The facts the answer rests on, computed from the data above. Printed as
     # well: `python notebook.py` then shows them to whoever checks the notebook.
     _domain = next((d for d in domains if d["start"] <= RESIDUE <= d["end"]), None)
@@ -281,6 +370,7 @@ def _(RESIDUE, VARIANT, clinvar, domains, literature_count, mo, sites):
     _pathogenic = clinvar["significance"].str.contains("athogenic", na=False) & ~clinvar["significance"].str.contains("onflicting|enign", na=False)
     _at_residue = int((_pathogenic & (clinvar["position"] == RESIDUE)).sum())
     facts = [
+        *definition,
         f"Région : {_domain['name']} ({_domain['start']}–{_domain['end']})" if _domain else "Région : aucune région annotée",
         f"Sites fonctionnels à ±5 résidus (UniProt) : {', '.join(sites) or 'aucun'}",
         (
@@ -292,6 +382,13 @@ def _(RESIDUE, VARIANT, clinvar, domains, literature_count, mo, sites):
         f"Variants pathogènes en position {RESIDUE} : {_at_residue} (point chaud mutationnel si plusieurs)",
         f"Articles (Europe PMC) : {literature_count if literature_count is not None else 'non disponible'}",
     ]
+    # What each paper says, and how much of it was read: the answer cites
+    # these excerpts, never a title alone.
+    for _p in papers.to_dict("records"):
+        facts.append(
+            f"PMID {_p['pmid']} ({_p['Premier auteur']} et al., {_p['Revue']}, {_p['Année']}) — lu : {_p['lu']} — "
+            f"{_p['Titre']} — extrait : {_p['Extrait'] or '(aucun)'}"
+        )
     print("\n".join(facts))
     mo.md("## Résumé des données\n\n" + "\n".join(f"- {f}" for f in facts))
     return
