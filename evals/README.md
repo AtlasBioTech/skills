@@ -23,13 +23,20 @@ For each model × run, the runner:
    `ATLAS_LLM_BASE_URL`, `ATLAS_LLM_API_KEY` and `ATLAS_LLM_MODEL` set, limited
    to 2 CPUs and 3 GB;
 2. waits for the bridge's `GET /healthz` (200 once OpenCode has a session);
-3. sends each prompt over the session WebSocket (workbench
-   `docs/contracts.md` §1) and keeps every frame until `turn_end`; permission
-   requests are **approved** (`allow_once`) and recorded; a turn that exceeds
-   the scenario's timeout is cancelled, then graded as it stands;
-4. reads `/workspace/notebook.py` and executes it with `marimo export html`
-   inside the container;
-5. grades, saves the artifacts, removes the container.
+3. over the session WebSocket (workbench `docs/contracts.md` §1), does what
+   the UI does: reads the `workspace` frame sent on connect, `create`s a
+   project named after the scenario id, takes the `created` frame's first
+   notebook and conversation (or creates the scenario's `notebook.name` and
+   makes it the active one), `open`s the conversation, and snapshots every
+   notebook of the workspace and the project's `PROJET.md`;
+4. sends each prompt with `notebook` set to the active notebook and keeps
+   every frame of the conversation until `turn_end`; permission requests are
+   **approved** (`allow_once`) and recorded; a turn that exceeds the
+   scenario's timeout is cancelled, then graded as it stands;
+5. snapshots them again, reads the active one
+   (`/workspace/<project>/notebooks/<active>.py`) and executes it with
+   `marimo export html` inside the container;
+6. grades, saves the artifacts, removes the container.
 
 Runs are ordered attempt by attempt (model A #1, model B #1, model A #2…) so a
 slow patch on the endpoint penalises every model alike.
@@ -107,10 +114,11 @@ removes the batch's workspaces.
 
 | File | |
 |---|---|
-| `summary.md` | the ranking (also printed): model × pass rate × median time × median tool calls × median tokens × main failure, then how many runs pass each check |
-| `runs.jsonl` | one record per run: every check with its failure detail, metrics (startup and turn times, tool calls by kind, failed tool calls, permissions granted, tokens), errors, the final answer |
+| `summary.md` | the ranking (also printed): model × pass rate × median time × median tool calls × median tokens × skills loaded × main failure, then how many runs pass each check |
+| `runs.jsonl` | one record per run: every check with its failure detail, metrics (startup and turn times, tool calls by kind, failed tool calls, permissions granted, skills loaded, tokens), the project and active notebook, errors, the final answer |
 | `<run>/frames.jsonl` | every bridge frame of the session |
-| `<run>/notebook.py` | the notebook the agent left |
+| `<run>/notebook.py` | the active notebook the agent left |
+| `<run>/other-<path>` | any other notebook the agent wrote (see `wrote_active_notebook`) |
 | `<run>/notebook-run.txt` | output of `marimo export html` (the traceback when a cell fails) |
 | `<run>/workspace.log` | the container's last 300 log lines |
 
@@ -126,16 +134,21 @@ All deterministic (no LLM judge), in [`src/graders.ts`](src/graders.ts):
 |---|---|
 | `turn_end` | every prompt's turn ended with `stopReason: "end_turn"` (not `timeout`, `cancelled`, `error`, `max_tokens`, a disconnect…) |
 | `no_errors` | the bridge sent no `error` frame and nothing timed out |
-| `notebook_changed` | the notebook exists and differs from the one before the first prompt |
-| `notebook_runs` | `marimo export html` of the notebook exits 0 within `run_timeout_s`, i.e. every cell ran without raising (it executes all cells in dependency order, like opening the notebook; the detail quotes the error) |
-| `nb:<name>` | the notebook matches the scenario's regex |
+| `notebook_changed` | the active notebook exists and differs from the one before the first prompt |
+| `wrote_active_notebook` | the active notebook changed and no other notebook did: none of the project's other notebooks, no new one, no `notebook.py` at the root as before projects (a notebook is a `.py` in a `notebooks/` folder or any marimo file outside hidden folders) |
+| `project_context_untouched` | the project's `PROJET.md` is as it was before the first prompt: it is the scientist's, and the agent changes it only when asked (workbench `AGENTS.md`) |
+| `notebook_runs` | `marimo export html` of the active notebook exits 0 within `run_timeout_s`, i.e. every cell ran without raising (it executes all cells in dependency order, like opening the notebook; the detail quotes the error) |
+| `nb:<name>` | the active notebook matches the scenario's regex |
 | `answer_french` | the last turn's text is French: ≥ 10 French function words and more than twice as many as English ones |
 | `answer:<name>` | the last turn's text contains one of the scenario's keywords, ignoring case and accents |
 | `harness` | only when the run could not happen (workspace did not start, docker error); the detail says why |
 
-Metrics are recorded, not graded: tokens come from OpenCode's own store in
+Metrics are recorded, not graded. Tokens come from OpenCode's own store in
 the workspace (ACP does not report usage), so they are `null` if its layout
-changes.
+changes; they count cache reads at full weight, so they are not a cost: for
+the cost of a run, read your provider's credits before and after it (e.g.
+OpenRouter's `GET /api/v1/credits`). "Skills loaded" are the skills the agent
+opened with its skill tool (e.g. `atlas-viewers`).
 
 ## Add a scenario
 
@@ -148,9 +161,10 @@ title: Short description
 prompts:                        # sent in order, each after the previous turn ends
   - "La question, en français…"
 timeout_s: 900                  # per prompt
-notebook:
-  path: /workspace/notebook.py  # default
-  must_change: true             # default
+notebook:                       # the active notebook of the project `<id>`
+  name: Structure               # optional: create notebooks/structure.py and make it
+                                #   the active one; default: the project's first, notebooks/analyse.py
+  must_change: true             # default (also grades wrote_active_notebook)
   must_run: true                # default
   run_timeout_s: 300            # default
   checks:                       # regexes on the final notebook
@@ -166,7 +180,8 @@ answer:
 ```
 
 The scenario is validated (regexes compile, names unique) before any container
-starts. [`scenarios/tp53-r175h.yaml`](scenarios/tp53-r175h.yaml) is the
+starts. `notebook.path` from before projects is refused: the notebook is now
+the project's active one. [`scenarios/tp53-r175h.yaml`](scenarios/tp53-r175h.yaml) is the
 Workbench demo.
 
 ## Develop
@@ -178,5 +193,6 @@ docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD/evals:/w" -w /w ove
   sh -c 'bun install && bun test && bunx tsc --noEmit'
 ```
 
-The tests cover the graders, the scenario validation and the summary; the
-docker and WebSocket parts are exercised by a run against the mock model.
+The tests cover the graders, the scenario validation, the summary and the
+session's create / open / prompt sequence against a fake bridge; the docker
+part is exercised by a run against the mock model.
