@@ -40,7 +40,11 @@ def _(hub, mo):
         found = hub.Entries()
         _out = mo.callout(mo.md(f"Hub injoignable : {_err}"), kind="danger")
     else:
-        _out = mo.vstack([mo.md("**Recherche « protein data bank » dans le hub**"), found])
+        # A short list: the entries used get their card below, once.
+        _out = mo.md(
+            f"**Recherche « protein data bank » dans le hub** : {len(found)} résultat(s)\n\n"
+            + "\n".join(f"- [{_e.display_name}]({_e.url}) (`{_e.ref}`)" for _e in found)
+        )
     _out
     return (found,)
 

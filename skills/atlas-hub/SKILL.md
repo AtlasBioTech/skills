@@ -42,7 +42,7 @@ Never build or invent a hub URL; cite only entries the hub returned.
 ```python
 import atlas_hub as hub
 
-hub.search("protein data bank", kind="dataset")        # cards, as a cell output
+found = hub.search("protein data bank", kind="dataset") # list of Entry (.display_name, .url, .ref)
 pdb = hub.entry("protein-ml/protein-data-bank")         # its card: last expression of a cell
 path = pdb.download("6m0j.cif")                          # local pathlib.Path, cached
 df = hub.read_table("chem-ml/moleculenet-bbbp", "bbbp.csv")   # csv/tsv/parquet → DataFrame
@@ -51,8 +51,9 @@ df = hub.read_table("chem-ml/moleculenet-bbbp", "bbbp.csv")   # csv/tsv/parquet 
 - `download` returns a **local path**: give it to `av.structure(path, …)`
   (skill `atlas-viewers`), Biopython, pandas. Don't re-download with
   `requests`, and don't use `/files/raw/` URLs in the notebook.
-- Show the entry with its card (`pdb`, or `mo.vstack([pdb, …])`) near the
-  cell that uses its data: the reader sees where the data comes from.
+- Show each entry you use **once** with its card (`pdb` as the last
+  expression, or `mo.vstack([pdb, …])`) near the cell that uses its data: the
+  reader sees where the data comes from. List search results as links.
 - Wrap hub calls in `try/except (hub.HubError, OSError)` and show a
   `mo.callout`; `mo.stop` the cells that need the file.
 - Public entries need no token. `hub.NotFound` on an entry you found by search
@@ -61,11 +62,12 @@ df = hub.read_table("chem-ml/moleculenet-bbbp", "bbbp.csv")   # csv/tsv/parquet 
 
 ## Recipe
 
-[`references/notebook.py`](references/notebook.py) runs as is: search → the
-entry's card → `6m0j.cif` downloaded → the RBD/ACE2 interface computed with
-Biopython (contacts ≤ 4 Å) → Mol* view with the interface highlighted → the
-`bbbp.csv` table summarised → a **facts** cell that `print`s what the answer
-rests on (with the hub URLs) → sources. Copy its cells for another entry.
+[`references/notebook.py`](references/notebook.py) runs as is: search (a
+list) → the entry's card → `6m0j.cif` downloaded → the RBD/ACE2 interface
+computed with Biopython (contacts ≤ 4 Å) → Mol* view with the interface
+highlighted → the `bbbp.csv` table summarised → a **facts** cell that
+`print`s what the answer rests on (with the hub URLs) → sources. Copy its
+cells for another entry.
 
 The files on the demo hub: `protein-ml/protein-data-bank` (`6m0j.cif`,
 `1igt.cif`), `chem-ml/moleculenet-bbbp` (`bbbp.csv`: columns `SMILES`,
