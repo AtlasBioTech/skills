@@ -1,14 +1,15 @@
 ---
 name: scientific-rigor
-description: How to word a scientific answer so a clinician can trust it - precise, sourced definitions (gene vs protein, HGNC and UniProt identifiers, domains with residue ranges, UniProt function), statements marked as Observé (the notebook's data), Rapporté (a cited paper, with its experimental level and what was read) or Hypothèse, and no causal claim a source does not make. Use for any answer about a gene, a protein, a variant, a mechanism, a pathway, a drug or what the literature says.
+description: How to word a scientific answer so a clinician can trust it - precise, sourced definitions (gene vs protein, HGNC and UniProt identifiers, domains with residue ranges, UniProt function), statements marked as Observé (the notebook's data), Rapporté (a cited paper, with its experimental level and what was read) or Hypothèse, no causal claim a source does not make, error bars and p-values that say what they are (SD, SEM or CI, what n counts, multiple-comparison correction), and a conclusion followed by the next step that would test it. Use for any answer about a gene, a protein, a variant, a mechanism, a pathway, a drug, what the literature says, or any quantitative result (a comparison, a mean, a figure with error bars, a p-value).
 ---
 
 # Scientific rigor in an answer
 
 The reader is a clinician or a biologist who will act on what you write.
-Three faults make an answer untrustworthy: a vague definition, a conclusion
-drawn from a paper's title, and a causal story no source tells. This skill
-is how to avoid them. Load `atlas-viewers` (or `clinical-trials`) for how to
+Five faults make an answer untrustworthy: a vague definition, a conclusion
+drawn from a paper's title, a causal story no source tells, a number whose
+uncertainty is hidden or mislabelled, and a conclusion handed over as if
+nothing could overturn it. This skill is how to avoid them. Load `atlas-viewers` (or `clinical-trials`) for how to
 fetch the data; this one is about what you then write.
 
 ## 1. Definitions: precise and sourced
@@ -75,6 +76,61 @@ print(r["abstractText"])  # the sentence you cite must be in here (or in the ful
 
 If the paper is not found, or the abstract does not say what you meant to
 cite it for, do not cite it.
+
+## 6. Numbers: say what the bars, n and p-values are
+
+For a quantitative result (a comparison between groups, a mean, a
+difference, a correlation), show its uncertainty, and say exactly what it is.
+Counts and lookups (the number of ClinVar variants, a residue range) need
+none of this.
+
+- **Show the uncertainty**: error bars on the figure, an interval in the
+  text (« 2,4 fois (IC 95 % 1,6–3,5) »), rather than a bare mean.
+- **Name the bars** in the figure's caption and in the chat: écart-type
+  (ET, the spread of the data), erreur standard de la moyenne (ESM, the
+  precision of the mean) or intervalle de confiance à 95 % (IC 95 %).
+  Prefer ET or IC 95 %: ESM bars look tighter than the data are, so never
+  draw them unlabelled.
+- **Say what n counts**: the independent unit (patient, donor, animal,
+  independent experiment), not cells, wells or technical replicates.
+  3 donors × 5 000 cells is n = 3: average each donor's cells, then compare
+  the donors. Treating each cell as a replicate makes any difference
+  « significant ».
+- **Tests only when a claim needs one.** Don't put a p-value on every
+  figure: an exploratory plot is fine with its bars. When you do test (the
+  scientist asked, or the answer claims a difference), name the test and
+  give the reason in one line (« test t de Welch : deux groupes, variances
+  inégales » ; « Mann-Whitney : n = 4 par groupe, pas d'hypothèse de
+  normalité »).
+- **Say whether you corrected for multiple comparisons**, and how many you
+  ran: « 20 gènes testés, correction de Benjamini-Hochberg » ; for one
+  comparison, « une seule comparaison, pas de correction ».
+- **If a test cannot be done honestly** (n = 1 per group, the unit is
+  unclear, assumptions clearly broken), say so and show the data instead
+  of forcing a p-value.
+
+A caption that says it all, in one line:
+
+> Moyenne ± ET, n = 3 donneurs par condition (chaque point est un donneur,
+> moyenne de ses cellules). Test t de Welch, une seule comparaison :
+> p = 0,04.
+
+## 7. After a conclusion: the next step that would test it
+
+When the answer draws a conclusion (« X augmente Y », « le cluster 3 est
+une population distincte »), end with the next step that would confirm it,
+if something material could overturn it: a small n, a batch confounded with
+the condition, a single study, a mouse-only result.
+
+- **Phrase it as a next step**, in one or two lines, not as a list of
+  limitations: « Pour le confirmer : comparer l'effet au sein de chaque
+  lot, les deux conditions ayant été préparées dans des lots différents. »
+- **Only what could change the conclusion.** Nothing to say is fine: say
+  nothing. No generic « limites » section, no checklist.
+- **Not for every turn.** Fetching data, drawing a figure or exploring
+  draws no conclusion, so it needs no next step.
+- The full picture (data, method, confounders, what cannot be concluded)
+  only when the scientist asks for it.
 
 ## Worked example: TP53 p.R175H
 
