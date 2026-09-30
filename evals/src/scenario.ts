@@ -43,6 +43,8 @@ export type Scenario = {
     language?: "fr";
     keywords: KeywordCheck[];
   };
+  /** Regexes on the agent's tool calls (title and input): each passes if any call matches. */
+  tools: { checks: PatternCheck[] };
 };
 
 export function loadScenario(dir: string, id: string): Scenario {
@@ -83,11 +85,20 @@ export function validateScenario(raw: unknown, where: string): Scenario {
       fail(`notebook check ${c.name}: ${(err as Error).message}`);
     }
   }
+  const toolChecks: PatternCheck[] = s.tools?.checks ?? [];
+  for (const c of toolChecks) {
+    if (typeof c.name !== "string" || typeof c.pattern !== "string") fail("each tools check needs `name` and `pattern`");
+    try {
+      new RegExp(c.pattern, c.flags ?? "i");
+    } catch (err) {
+      fail(`tools check ${c.name}: ${(err as Error).message}`);
+    }
+  }
   const keywords: KeywordCheck[] = answer.keywords ?? [];
   for (const k of keywords) {
     if (typeof k.name !== "string" || !Array.isArray(k.any) || k.any.length === 0) fail("each answer keyword needs `name` and a non-empty `any` list");
   }
-  const names = [...checks.map((c) => c.name), ...keywords.map((k) => k.name)];
+  const names = [...checks.map((c) => c.name), ...keywords.map((k) => k.name), ...toolChecks.map((c) => c.name)];
   const dup = names.find((n, i) => names.indexOf(n) !== i);
   if (dup) fail(`check name ${dup} is used twice`);
 
@@ -104,5 +115,6 @@ export function validateScenario(raw: unknown, where: string): Scenario {
       checks,
     },
     answer: { language: answer.language, keywords },
+    tools: { checks: toolChecks },
   };
 }

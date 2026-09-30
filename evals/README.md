@@ -141,6 +141,7 @@ All deterministic (no LLM judge), in [`src/graders.ts`](src/graders.ts):
 | `nb:<name>` | the active notebook matches the scenario's regex |
 | `answer_french` | the last turn's text is French: ≥ 10 French function words and more than twice as many as English ones |
 | `answer:<name>` | the last turn's text contains one of the scenario's keywords, ignoring case and accents |
+| `tool:<name>` | one of the agent's tool calls (its title and input: the shell command, the file written) matches the scenario's regex; for what leaves no trace in the notebook, such as a search run in the shell |
 | `harness` | only when the run could not happen (workspace did not start, docker error); the detail says why |
 
 Metrics are recorded, not graded. Tokens come from OpenCode's own store in
@@ -177,6 +178,10 @@ answer:
   keywords:                     # each passes if any of the strings appears
     - name: pathogenic
       any: ["pathogène"]
+tools:                          # optional: regexes on the tool calls
+  checks:                       # each passes if any call's title or input matches
+    - name: hub_search
+      pattern: 'atlas_hub\s+search'
 ```
 
 The scenario is validated (regexes compile, names unique) before any container

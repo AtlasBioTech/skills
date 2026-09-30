@@ -1,0 +1,46 @@
+# The hub in the workspace (skill atlas-hub): a structure question answered
+# from the Atlas hub's data rather than from the open web. A run passes when
+# the agent searched the hub (shell or cell), the notebook loads 6m0j.cif
+# through atlas_hub and shows it with the Mol* viewer, and the answer cites
+# the hub entry by its page URL (the chat renders it as a chip) and names the
+# residues at the interface, in French. The grader does not require a
+# particular search query: the hub indexes names, tags and descriptions, so
+# "ACE2" finds nothing and the skill tells the agent to broaden. Format: see
+# ../README.md.
+id: rbd-ace2-hub
+title: Interface RBD / ACE2 à partir du hub Atlas
+
+prompts:
+  - Montre-moi l'interface entre le RBD du SARS-CoV-2 et ACE2 à partir des données du hub Atlas.
+
+timeout_s: 900
+
+notebook:
+  must_change: true
+  must_run: true
+  run_timeout_s: 300
+  checks:
+    - name: uses_atlas_hub
+      why: the data comes through the hub client, in the notebook
+      pattern: '^\s*(import atlas_hub|from atlas_hub import)'
+      flags: im
+    - name: loads_6m0j
+      why: the notebook loads the hub's 6M0J structure file
+      pattern: '6m0j\.cif'
+    - name: structure_viewer
+      why: the structure is displayed with the Workbench viewer
+      pattern: '\b(av|atlas_viewers)\.structure\('
+
+answer:
+  language: fr
+  keywords:
+    - name: hub_entry_link
+      any: ["https://demoatlas.online/datasets/protein-ml/protein-data-bank"]
+    - name: interface_residue
+      any: ["N501", "Asn501", "Q493", "Gln493", "K417", "Lys417", "Y505", "Tyr505"]
+
+tools:
+  checks:
+    - name: hub_search
+      why: the agent searched the catalogue (python -m atlas_hub search, or hub.search in a cell)
+      pattern: 'atlas_hub\s+search|\w*hub\w*\.search\('
