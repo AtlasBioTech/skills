@@ -8,7 +8,7 @@ import { execIn, logsOf, removeContainer, startWorkspace, waitHealthy, type Work
 import { grade, otherNotebooksChanged, type Observation } from "./graders";
 import type { RunRecord, Tokens } from "./report";
 import type { Scenario } from "./scenario";
-import { runSession, skillsLoaded, toolStats, type Frame, type SessionResult } from "./session";
+import { runSession, skillsLoaded, toolCallTexts, toolStats, type Frame, type SessionResult } from "./session";
 
 export type RunConfig = {
   scenario: Scenario;
@@ -99,6 +99,7 @@ export async function runOne(cfg: RunConfig): Promise<RunRecord> {
       contextBefore: before.context,
       contextAfter: after.context,
       notebookRun,
+      toolCalls: toolCallTexts(session.frames),
     };
     record.checks = grade(scenario, obs);
     fillMetrics(record, session);

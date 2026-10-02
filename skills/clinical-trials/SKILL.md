@@ -15,9 +15,11 @@ drug codes and percentages are exactly what a model gets wrong.
 ## Rules
 
 1. **Query in the notebook.** Trials come from ClinicalTrials.gov, published
-   results from Europe PMC, each in a cell that calls the API with `requests`.
-   Your own web-fetch and shell tools are only for trying a query before you
-   write that cell.
+   results from Europe PMC, each in a cell that calls the API through the
+   reference's `get_json` helper (`requests` inside), which logs each request
+   for the « Provenance » table and saves the raw response. Your own
+   web-fetch and shell tools are only for trying a query before you write
+   that cell.
 2. **Show three tables** with `av.table`: the trials (NCT id linked to the
    trial page), the trial publications (title linked to the article), and
    one row per trial with its publications (PMIDs), so the trials without
@@ -57,7 +59,7 @@ title or a results section names it, e.g. `r"lung cancer|NSCLC|non-small"`);
 keep the structure: question → drug codes (ChEMBL) → trials
 (ClinicalTrials.gov) table → drugs counted from the trials → trial
 publications (Europe PMC) table with their endpoints → which trial
-published what (table) → **facts** → sources.
+published what (table) → **facts** → sources → **provenance**.
 
 Every trial count comes from **one set, named in the text**: interventional
 trials, not withdrawn, running at some point since `SINCE`
@@ -87,6 +89,12 @@ publications set aside, and for each publication its type, ORR, PFS, OS and
 Results section; the publications of each trial and the trials with no
 published result.
 
+The last cell, « Provenance », lists every request: source, release
+(ClinicalTrials.gov API version and data date; Europe PMC publishes none and
+the table says so), exact query and UTC date, and prints one line per
+source. The raw responses are saved, gzipped, under `provenance/<date>/`
+next to the notebook, with `requests.json`, the full log.
+
 ## Answer from the data
 
 Your chat answer states these facts with their numbers and sources (NCT ids,
@@ -99,13 +107,16 @@ dans le résumé » or « immature ». Say which trials are still
 recruiting, which have **no published results yet**, and, for a stopped or
 truncated trial, the registry's reason and actual enrolment. Every number you
 give about the trials is a count over the set the notebook states; say that
-set once (« sur N essais interventionnels… »).
+set once (« sur N essais interventionnels… »). Say when the registry was
+queried and its data date, as the « Provenance » line printed it
+(« ClinicalTrials.gov, données du … »).
 
 ## Before you end your turn
 
-1. Re-read the notebook: it contains three `av.table(` calls, each the last
-   expression of its cell, and `requests.get` calls to
-   `clinicaltrials.gov/api/v2` and Europe PMC.
+1. Re-read the notebook: it contains four `av.table(` calls (trials,
+   publications, trials and their publications, provenance), each the last
+   expression of its cell, `get_json` calls to `clinicaltrials.gov/api/v2`
+   and Europe PMC, and the « Provenance » cell last.
 2. Run `marimo check notebooks/<name>.py` then `python notebooks/<name>.py`
    (must exit 0) from the project folder. Fix and re-run until both pass.
 3. Answer in the chat from the facts it printed, and point to the tables.

@@ -3,3 +3,5 @@ __pycache__/
 node_modules/
 .pixi/
 evals/runs/
+# Raw responses the reference notebooks save when run in place
+skills/*/references/provenance/

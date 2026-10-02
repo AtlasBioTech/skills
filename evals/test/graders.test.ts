@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { frenchScore, grade, normalize, otherNotebooksChanged, type Observation } from "../src/graders";
 import { median, summarize, type RunRecord } from "../src/report";
 import { loadScenario, validateScenario } from "../src/scenario";
-import { pickAllow, skillsLoaded, toolStats } from "../src/session";
+import { pickAllow, skillsLoaded, toolCallTexts, toolStats } from "../src/session";
 
 const scenario = loadScenario(join(import.meta.dir, "..", "scenarios"), "tp53-r175h");
 
@@ -48,6 +48,7 @@ function observation(over: Partial<Observation> & { notebookAfter?: string | nul
     contextBefore: "# tp53-r175h\n",
     contextAfter: "# tp53-r175h\n",
     notebookRun: { exitCode: 0, stderr: "", seconds: 3 },
+    toolCalls: [],
     ...rest,
   };
 }
@@ -55,6 +56,17 @@ function observation(over: Partial<Observation> & { notebookAfter?: string | nul
 const failed = (obs: Observation) => grade(scenario, obs).filter((c) => !c.pass).map((c) => c.name);
 
 describe("grade", () => {
+  test("tools checks pass when any tool call matches, and are named tool:<name>", () => {
+    const hub = loadScenario(join(import.meta.dir, "..", "scenarios"), "rbd-ace2-hub");
+    const names = (obs: Observation) => grade(hub, obs).filter((c) => c.name.startsWith("tool:"));
+    const none = names(observation({ toolCalls: ['bash\n{"command":"python -c \'import requests\'"}'] }));
+    expect(none.map((c) => [c.name, c.pass])).toEqual([["tool:hub_search", false]]);
+    const shell = names(observation({ toolCalls: ["read", 'bash\n{"command":"python -m atlas_hub search protein data bank --json"}'] }));
+    expect(shell.every((c) => c.pass)).toBe(true);
+    const cell = names(observation({ toolCalls: ['write\n{"content":"found = hub.search(\\"protein data bank\\")"}'] }));
+    expect(cell.every((c) => c.pass)).toBe(true);
+  });
+
   test("a good run passes every check", () => {
     expect(failed(observation())).toEqual([]);
   });
@@ -190,6 +202,17 @@ test("toolStats counts calls by id and keeps the kind from the first frame", () 
     u({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "x" } }),
   ]);
   expect(stats).toEqual({ calls: 2, failed: 1, byKind: { read: 1, execute: 1 } });
+});
+
+test("toolCallTexts keeps every title and input of a call, one string per call", () => {
+  const u = (update: object) => ({ type: "update", update });
+  const texts = toolCallTexts([
+    u({ sessionUpdate: "tool_call", toolCallId: "1", title: "bash", kind: "execute", rawInput: {} }),
+    u({ sessionUpdate: "tool_call_update", toolCallId: "1", rawInput: { command: "python -m atlas_hub search sars" } }),
+    u({ sessionUpdate: "tool_call", toolCallId: "2", title: "read" }),
+    u({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "x" } }),
+  ]);
+  expect(texts).toEqual(['bash\n{}\n{"command":"python -m atlas_hub search sars"}', "read"]);
 });
 
 test("summarize ranks models by pass rate", () => {

@@ -21,6 +21,8 @@ export type Observation = {
   contextAfter: string | null;
   /** `marimo export html` of the final notebook; null when it was not run. */
   notebookRun: { exitCode: number; stderr: string; seconds: number } | null;
+  /** One string per tool call: its titles and inputs (session.ts toolCallTexts). */
+  toolCalls: string[];
 };
 
 export function grade(scenario: Scenario, obs: Observation): Check[] {
@@ -97,6 +99,14 @@ export function grade(scenario: Scenario, obs: Observation): Check[] {
   for (const k of scenario.answer.keywords) {
     const pass = k.any.some((word) => haystack.includes(normalize(word)));
     checks.push({ name: `answer:${k.name}`, pass, detail: pass ? undefined : `none of ${k.any.join(" / ")}` });
+  }
+
+  // 4. What the agent did, whatever it wrote (a search in the shell leaves
+  // no trace in the notebook).
+  for (const c of scenario.tools.checks) {
+    const re = new RegExp(c.pattern, c.flags ?? "i");
+    const pass = obs.toolCalls.some((call) => re.test(call));
+    checks.push({ name: `tool:${c.name}`, pass, detail: pass ? undefined : `no tool call matches /${c.pattern}/ (${obs.toolCalls.length} calls)` });
   }
   return checks;
 }
