@@ -252,6 +252,24 @@ export function toolStats(frames: Frame[]): ToolStats {
 }
 
 /**
+ * One string per tool call, for the scenario's `tools` checks: every title
+ * and input its tool_call / tool_call_update frames carried, one per line
+ * (OpenCode sends the command or the file content in rawInput).
+ */
+export function toolCallTexts(frames: Frame[]): string[] {
+  const calls = new Map<string, string[]>();
+  for (const f of frames) {
+    const u = f.type === "update" ? f.update : undefined;
+    if (!u || (u.sessionUpdate !== "tool_call" && u.sessionUpdate !== "tool_call_update")) continue;
+    const parts = calls.get(u.toolCallId) ?? [];
+    if (typeof u.title === "string") parts.push(u.title);
+    if (u.rawInput !== undefined) parts.push(JSON.stringify(u.rawInput));
+    calls.set(u.toolCallId, parts);
+  }
+  return [...calls.values()].map((parts) => parts.join("\n"));
+}
+
+/**
  * The skills the agent loaded (OpenCode's `skill` tool: the name is in the
  * update's rawInput, and the completed call is titled "Loaded skill: <name>").
  */
