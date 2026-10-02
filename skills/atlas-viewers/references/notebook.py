@@ -18,9 +18,11 @@ def _():
 
 
 @app.cell
-def _(mo):
-    mo.md("""
-    # KRAS p.G12D : localisation, signification clinique, littérature
+def _(GENE, VARIANT, mo):
+    # Every string the reader sees is built from GENE, VARIANT, RESIDUE and
+    # ACCESSION: change those four and nothing else names the example's gene.
+    mo.md(f"""
+    # {GENE} p.{VARIANT} : localisation, signification clinique, littérature
 
     Données interrogées en direct : UniProt, AlphaFold DB, ClinVar (NCBI), Europe PMC.
     """)
@@ -127,26 +129,26 @@ def _(ACCESSION, GENE, RESIDUE, get_json, mo, re):
 
 
 @app.cell
-def _(mo):
-    mo.md("""
+def _(RESIDUE, mo):
+    mo.md(f"""
     ## 2. Structure 3D (AlphaFold DB)
 
-    Couleurs : confiance du modèle (pLDDT). Le résidu 12 est en magenta.
+    Couleurs : confiance du modèle (pLDDT). Le résidu {RESIDUE} est en magenta.
     """)
     return
 
 
 @app.cell
-def _(ACCESSION, av, get_json, mo):
+def _(ACCESSION, GENE, RESIDUE, VARIANT, av, get_json, mo):
     # The AlphaFold DB API gives the current model's URL: never hard-code a model version.
     try:
         _model = get_json(f"https://alphafold.ebi.ac.uk/api/prediction/{ACCESSION}")[0]
         _view = av.structure(
             _model["cifUrl"],
-            highlight=[12],
-            labels={12: "G12D"},
+            highlight=[RESIDUE],
+            labels={RESIDUE: VARIANT},
             color_by="plddt",
-            title="KRAS · modèle AlphaFold",
+            title=f"{GENE} · modèle AlphaFold",
             subtitle=_model["entryId"],
         )
     except Exception as _err:
@@ -405,7 +407,7 @@ def _(VARIANT, clinvar, clinvar_records, re, requests):
 
 
 @app.cell
-def _(av, clinvar, clinvar_error, domains, length, mo):
+def _(GENE, RESIDUE, VARIANT, av, clinvar, clinvar_error, domains, length, mo, reference_transcript):
     # av.variants reads the columns position, label and significance; `label=` renames one.
     mo.stop(clinvar_error is not None, mo.callout(mo.md(f"ClinVar injoignable : {clinvar_error}"), kind="danger"))
     av.variants(
@@ -413,9 +415,9 @@ def _(av, clinvar, clinvar_error, domains, length, mo):
         label="variant",
         length=length,
         domains=domains,
-        highlight=[12],
-        labels={12: "G12D"},
-        title=f"Variants faux-sens de KRAS dans ClinVar ({len(clinvar)})",
+        highlight=[RESIDUE],
+        labels={RESIDUE: VARIANT},
+        title=f"Variants faux-sens de {GENE} dans ClinVar ({len(clinvar)}, {reference_transcript})",
     )
     return
 
@@ -431,7 +433,7 @@ def _(RESIDUE, VARIANT, av, clinvar, mo):
         _same_residue.sort_values("_other").drop(columns="_other"),
         links={"ClinVar": "https://www.ncbi.nlm.nih.gov/clinvar/variation/{clinvar_id}/"},
         columns=["variant", "hgvs_c", "significance", "review", "oncogenicity", "clinical_impact", "conditions", "ClinVar"],
-        title="Variants ClinVar en position 12",
+        title=f"Variants ClinVar en position {RESIDUE}",
     )
     return
 
@@ -608,11 +610,11 @@ def _(
 
 
 @app.cell
-def _(mo):
-    mo.md("""
+def _(ACCESSION, mo, reference_transcript):
+    mo.md(f"""
     ## Sources
 
-    UniProt P01116 · AlphaFold DB AF-P01116-F1 · ClinVar (NCBI E-utilities) · Europe PMC.
+    UniProt {ACCESSION} · AlphaFold DB AF-{ACCESSION}-F1 · ClinVar (NCBI E-utilities, transcrit {reference_transcript}) · Europe PMC.
     """)
     return
 

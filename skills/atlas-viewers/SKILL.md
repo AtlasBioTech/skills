@@ -68,8 +68,9 @@ Where the data comes from:
 
 Read [`references/notebook.py`](references/notebook.py): a complete notebook
 (KRAS p.G12D) that runs as is. For another protein, copy its cells and change
-the gene, its accession (look it up, see above: a wrong one shows another
-protein), the variant and the residue numbers; keep the
+the four constants `GENE`, `ACCESSION` (look it up, see above: a wrong one
+shows another protein), `VARIANT` and `RESIDUE`: every title, label and
+source line is built from them, so write none by hand; keep the
 structure: question → protein (UniProt) → 3D structure → ClinVar variants
 plot and table → literature → **facts** → sources.
 
