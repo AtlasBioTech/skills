@@ -40,13 +40,20 @@ av.structure(source, highlight=[12], labels={12: "G12D"}, color_by="plddt",
              title="", subtitle="", height=480)
 # source: URL (downloaded by the kernel), local path or bytes; mmCIF/BinaryCIF/PDB.
 # Residues use UniProt numbering on AlphaFold models.
-# color_by: "auto" | "plddt" | "chain" | "secondary-structure" | "rainbow" | "uniform"
+# Many residues (an interface)? The viewer labels at most six at rest, the
+# others on hover and counted in a note; key=[417, 501] picks the ones named.
+# color_by: "auto" | "plddt" | "domain" | "chain" | "secondary-structure" | "rainbow" | "uniform"
+# domains=[{"name": "RING", "start": 24, "end": 65}, ...] colours by domain and gives each
+# one's mean pLDDT; a low-confidence model gets a red notice on the figure by itself.
+# region=(94, 292): judge confidence on the region asked about only; hide_low_confidence=True.
 
 av.variants(df, length=189, domains=[{"start": 32, "end": 40, "name": "Effector"}],
             highlight=[12], labels={12: "G12D"}, title="",
             position="position", label="label", significance="significance")
 # df: one row per variant; the three column names are set by the last three
 # arguments (e.g. label="variant"). significance: ClinVar wording or P/LP/VUS/LB/B.
+# Pass every variant, even thousands (BRCA1): mode="auto" (default) switches a dense
+# plot to P/LP stems + a density track, with a switch to every stem. "lollipop"/"density" force one.
 
 av.table(df, links={"ClinVar": "https://www.ncbi.nlm.nih.gov/clinvar/variation/{clinvar_id}/"},
          columns=None, title="", height=420)
