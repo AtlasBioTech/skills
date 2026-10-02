@@ -18,8 +18,10 @@ drug codes and percentages are exactly what a model gets wrong.
    results from Europe PMC, each in a cell that calls the API with `requests`.
    Your own web-fetch and shell tools are only for trying a query before you
    write that cell.
-2. **Show both tables** with `av.table`: the trials (NCT id linked to the
-   trial page) and the trial publications (title linked to the article).
+2. **Show three tables** with `av.table`: the trials (NCT id linked to the
+   trial page), the trial publications (title linked to the article), and
+   one row per trial with its publications (PMIDs), so the trials without
+   published results show.
 3. `import atlas_viewers as av` in the first cell, next to `import marimo as mo`.
 4. A table is displayed only as the **last expression of its cell** (alone,
    or inside `mo.vstack([...])`).
@@ -32,28 +34,58 @@ drug codes and percentages are exactly what a model gets wrong.
 
 | What | Call |
 |---|---|
-| Trials | `GET https://clinicaltrials.gov/api/v2/studies` with `query.cond` (disease), `query.intr` (drugs, `OR`-separated; add the target, e.g. `KRAS G12C inhibitor`), optionally `query.term` (biomarker, e.g. `KRAS G12C`), `filter.advanced=AREA[StartDate]RANGE[2021-01-01,MAX]` for "recent", `fields=NCTId,BriefTitle,OverallStatus,Phase,StartDate,LeadSponsorName,EnrollmentCount,InterventionName,HasResults`, `sort=StartDate:desc`, `pageSize=200`, `countTotal=true` → `studies[].protocolSection`, `totalCount` |
-| Trial publications | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=…&format=json&resultType=core&sort=CITED desc` with `PUB_TYPE:"Clinical Trial"` (or `"Randomized Controlled Trial"`, `"Clinical Trial, Phase III"`) and `FIRST_PDATE:[2021-01-01 TO 3000-01-01]`; `TITLE:`/`ABSTRACT:` narrow the terms → `resultList.result[]`: `pmid`, `title`, `journalInfo.journal.title`, `pubYear`, `citedByCount`, `authorString`, `abstractText` |
+| Drug codes | `GET https://www.ebi.ac.uk/chembl/api/data/molecule.json?pref_name__in=SOTORASIB,ADAGRASIB,…&only=pref_name,molecule_synonyms` (one call for all drugs) → `molecules[].molecule_synonyms[].molecule_synonym`; keep only code-shaped names (`AMG-510`, `JDQ443`): the lists also hold other drugs' names |
+| Trials | `GET https://clinicaltrials.gov/api/v2/studies` with `query.cond` (disease **and its abbreviation**, e.g. `non-small cell lung cancer OR NSCLC`: basket trials register "solid tumours" and name the disease only in keywords), `query.intr` (drugs and their codes, `OR`-separated; add the target, e.g. `KRAS G12C inhibitor`), `filter.advanced=AREA[CompletionDate]RANGE[2021-01-01,MAX] OR AREA[CompletionDate]MISSING` for "recent" (running at some point since then), `fields=NCTId,Acronym,BriefTitle,StudyType,OverallStatus,WhyStopped,Phase,StartDate,CompletionDate,LeadSponsorName,EnrollmentInfo,HasResults,ArmsInterventionsModule,ReferencesModule`, `pageSize=200`, `countTotal=true`, then `pageToken=nextPageToken` until there is none → `studies[].protocolSection`, `totalCount` |
+| Trial publications | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=…&format=json&resultType=core` with `PUB_TYPE:"Clinical Trial"` (or `"Randomized Controlled Trial"`, `"Clinical Trial, Phase III"`) and `FIRST_PDATE:[2021-01-01 TO 3000-01-01]`; `TITLE:`/`ABSTRACT:` narrow the terms. Run it twice, `sort=CITED desc` **and** `sort=P_PDATE_D desc`: citation counts alone leave out the recent trials → `resultList.result[]`: `pmid`, `title`, `journalInfo.journal.title`, `pubYear`, `citedByCount`, `authorString`, `abstractText` (sections in `<h4>`), `pubTypeList.pubType` (trial, meta-analysis, comment, protocol…) |
+| Trial ↔ publication | the trial's `referencesModule.references[]` of `type` `RESULT` or `DERIVED` (`pmid`), plus Europe PMC `ABSTRACT:"NCT04685135" OR ABSTRACT:"…"` (40 ids per call, `resultType=core`), each hit assigned by the NCT ids in its `abstractText`. Not a bare `"NCT…"` query: it searches full texts, where every review citing the trial matches |
 | A trial's page | `https://clinicaltrials.gov/study/{nct}` · an article: `https://europepmc.org/article/MED/{pmid}` |
 
 Drug names you put in `query.intr` are search terms, not facts: list the
 class and the names you know (approved and investigational), and let the
-registry say which trials test them.
+registry say which trials test them. Count a drug only where an `EXPERIMENTAL`
+arm gives it (`armGroups[].type`; `interventions[].armGroupLabels`), under any
+of its names (`interventions[].otherNames`, ChEMBL codes): a comparator arm
+(sotorasib in Krascendo 1) does not test it, and `MRTX849` is adagrasib.
 
 ## Recipe
 
 Read [`references/notebook.py`](references/notebook.py): a complete notebook
 (PARP inhibitors in ovarian cancer) that runs as is. For another question,
-copy its cells and change `CONDITION`, `INTERVENTION`, `SINCE` and
-`PAPERS_QUERY`; keep the structure: question → trials (ClinicalTrials.gov)
-table → drugs counted from the trials → trial publications (Europe PMC)
-table → **facts** → sources.
+copy its cells and change `CONDITION`, `INTERVENTION`, `SINCE`,
+`PAPERS_QUERY`, and `_ABOUT` in the publications cell (the disease as a
+title or a results section names it, e.g. `r"lung cancer|NSCLC|non-small"`);
+keep the structure: question → drug codes (ChEMBL) → trials
+(ClinicalTrials.gov) table → drugs counted from the trials → trial
+publications (Europe PMC) table with their endpoints → which trial
+published what (table) → **facts** → sources.
+
+Every trial count comes from **one set, named in the text**: interventional
+trials, not withdrawn, running at some point since `SINCE`
+(`scope`). Withdrawn trials (they never enrolled anyone) and observational
+or expanded-access studies are listed apart, never added to the totals.
+
+The publications table keeps a paper only when its title or Results
+section names the disease (`_ABOUT`) **and** one of the searched drugs
+(their names and codes, as the trials cell found them, or the class
+searched); the others are listed apart (« autre maladie », « sans molécule
+recherchée »). It labels each paper's **type** (essai, analyse poolée,
+comparaison indirecte (MAIC), méta-analyse, protocole, commentaire / news)
+and why it was selected (plus citées, plus récentes), shows the **whole**
+Results section of the abstract (« pas de résultats dans le résumé » for a
+protocol or a comment: never its background instead), and reads **ORR,
+PFS and OS** from it into columns (medians, HR, 95 % CI, p). OS always has
+a value: a figure, « immature », or « non rapportée dans le résumé ». Never
+cut an abstract at a number of characters: abstracts give the primary
+endpoint first, and the cut drops overall survival.
 
 The facts cell computes, from the data above, what the answer rests on, and
-also `print`s it, so `python notebooks/<name>.py` shows it to you: the number
-of trials, by phase and status; the drugs most tested; the phase-3 trials;
-the most cited trial publications with the results section of their
-abstract.
+also `print`s it, so `python notebooks/<name>.py` shows it to you: that set
+and its size, by phase and status; the trials recruiting; the drugs most
+tested in experimental arms; **every** phase-3 trial with its status,
+enrolment (actual or planned) and why it stopped; the Europe PMC query, the
+publications set aside, and for each publication its type, ORR, PFS, OS and
+Results section; the publications of each trial and the trials with no
+published result.
 
 ## Answer from the data
 
@@ -61,12 +93,17 @@ Your chat answer states these facts with their numbers and sources (NCT ids,
 PMIDs), in French, as the notebook found them. Efficacy figures (response
 rate, progression-free survival, hazard ratio) only from an abstract the
 notebook printed, with its PMID; if a figure is not there, say it was not
-checked rather than quoting it from memory. Say which trials are still
-recruiting.
+checked rather than quoting it from memory. For each trial you summarise,
+give overall survival as the notebook found it, including « non rapportée
+dans le résumé » or « immature ». Say which trials are still
+recruiting, which have **no published results yet**, and, for a stopped or
+truncated trial, the registry's reason and actual enrolment. Every number you
+give about the trials is a count over the set the notebook states; say that
+set once (« sur N essais interventionnels… »).
 
 ## Before you end your turn
 
-1. Re-read the notebook: it contains two `av.table(` calls, each the last
+1. Re-read the notebook: it contains three `av.table(` calls, each the last
    expression of its cell, and `requests.get` calls to
    `clinicaltrials.gov/api/v2` and Europe PMC.
 2. Run `marimo check notebooks/<name>.py` then `python notebooks/<name>.py`
