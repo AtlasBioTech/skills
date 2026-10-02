@@ -345,6 +345,8 @@ def _(GENE, get_json, mo, pd, re):
         f"{int((_unclassified & _somatic).sum())} avec une classification somatique seule et "
         f"{int((_unclassified & ~_somatic).sum())} sans aucune classification (« no classification provided ») ; "
         f"{int(_somatic.sum())} avec une classification somatique (oncogénicité ou impact clinique)"
+        if clinvar_error is None
+        else f"ClinVar {GENE} : injoignable ({clinvar_error}), aucun décompte"
     )
     # Fail loudly: every record the search counted must have come back.
     _warning = None
@@ -604,6 +606,7 @@ def _(
     RESIDUE,
     VARIANT,
     clinvar,
+    clinvar_error,
     clinvar_summary,
     definition,
     domains,
@@ -631,7 +634,11 @@ def _(
         f"Résidu {RESIDUE} dans UniProt : {reference_residue}"
         + ("" if reference_residue == VARIANT[0] else f" — DIFFÉRENT de la référence du variant {VARIANT} : numérotation d'une autre isoforme ?"),
         *structure_facts,
-        *(variant_facts or [f"ClinVar {VARIANT} : absent de la recherche"]),
+        # A failed request is not an absence: say which one it is.
+        *(
+            variant_facts
+            or [f"ClinVar injoignable, {VARIANT} non vérifié : {clinvar_error}" if clinvar_error else f"ClinVar {VARIANT} : absent de la recherche"]
+        ),
         clinvar_summary,
         f"Variants pathogènes ClinVar à cette position (classification germinale pathogène ou probablement pathogène) : "
         f"{len(_here)}{' — ' + ', '.join(_here['variant']) if len(_here) else ''}",
