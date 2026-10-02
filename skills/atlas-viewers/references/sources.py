@@ -39,15 +39,16 @@ def _(mo, requests):
     calls = []
     SAVE_RAW = True
 
-    def fetch(url, params=None, body=None):
-        # GET, or POST of a JSON body (GraphQL APIs, cBioPortal). Imports kept
+    def fetch(url, params=None, body=None, accept="application/json"):
+        # GET, or POST of a JSON body (GraphQL APIs, cBioPortal); `accept` for a
+        # non-JSON answer (Europe PMC full text is XML). Imports kept
         # local so that no other cell's import clashes with them.
         import gzip, hashlib, json
         from datetime import datetime, timezone
         from pathlib import Path
 
         if body is None:
-            response = requests.get(url, params=params, timeout=60, headers={"Accept": "application/json"})
+            response = requests.get(url, params=params, timeout=60, headers={"Accept": accept})
         else:
             response = requests.post(url, params=params, json=body, timeout=120)
         when = datetime.now(timezone.utc)

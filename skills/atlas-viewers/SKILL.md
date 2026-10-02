@@ -63,8 +63,8 @@ Where the data comes from:
 | AlphaFold model | `GET https://alphafold.ebi.ac.uk/api/prediction/{accession}` → `[0]["cifUrl"]` (never hard-code the model version) |
 | ClinVar variants | `esearch.fcgi?db=clinvar&term={GENE}[gene] AND missense_variant[molecular_consequence]&retmode=json`, paged with `retstart`/`retmax` until `esearchresult.count` ids are in hand (never `single_gene[prop]`: it drops every record that also lists an overlapping locus, e.g. all of BRCA1's exon 11), then `esummary.fcgi?db=clinvar&id=…` (≤ 400 ids per call); check that as many records came back as `count` said. Transcript, gene, c. and p. changes in `title`; keep the records on the gene's reference transcript (MANE Select, the most frequent in the titles). Classes: `germline_classification`, and the somatic ones apart, `oncogenicity_classification` and `clinical_impact_classification` (each with `description`, `review_status`, `last_evaluated`); a record with none has "no classification provided" (evidence-only submissions). GRCh38 position in `variation_set[0].variation_loc`, `canonical_spdi`, dbSNP in `variation_xrefs` |
 | One variant's submissions | `efetch.fcgi?db=clinvar&id={variation id}&rettype=vcv&is_variationid` → XML, one `ClinicalAssertion` per submission with its own `Classification`; an expert panel's ACMG criteria are in its `Classification/Comment` |
-| Literature | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=…&format=json&sort=CITED desc&resultType=core` → `abstractText`, `isOpenAccess`, `pmcid` (`lite` has no abstract) |
-| Full text (open access only) | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML` → JATS XML, `body/sec` with `sec-type` results, discussion. Only when `isOpenAccess == "Y"`: the others fail after seconds |
+| Literature | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=…&format=json&resultType=core` → `abstractText` (sections in `<h4>`), `isOpenAccess`, `pmcid` (`lite` has no abstract). Query every notation of the variant (`TITLE_ABS:"R175H" OR TITLE_ABS:"Arg175His" OR … TITLE_ABS:"c.524G>A"`, the cDNA change from ClinVar's record title) `AND {GENE}`; run it twice, `sort=CITED desc` **and** `sort=P_PDATE_D desc`, so recent work is not left out; the same notations `AND OPEN_ACCESS:y AND NOT (…title/abstract…)` finds the papers that name it only in their full text |
+| Full text (open access only) | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML` → JATS XML, `body/sec` with `sec-type` results, discussion, conclusions; through the helper, `fetch(url, accept="application/xml")` (asked for JSON it answers 406), so it is in the provenance. Only when `isOpenAccess == "Y"`: the others fail after seconds |
 | Population frequency | gnomAD GraphQL `POST https://gnomad.broadinstitute.org/api`: `gene(gene_symbol, reference_genome: GRCh38) { variants(dataset: gnomad_r4) { variant_id hgvsp exome { ac an } genome { ac an } } }`, matched on `hgvsp` (`p.Arg175His`) |
 | Frequency in tumours | cBioPortal `https://www.cbioportal.org/api`: studies `keyword=tcga_pan_can_atlas_2018`, `POST /sample-lists/fetch` (`{study}_sequenced`, the denominator), `POST /mutations/fetch` `{entrezGeneIds, molecularProfileIds: [{study}_mutations]}` → `proteinChange` |
 | Clinical evidence | CIViC GraphQL `POST https://civicdb.org/api/graphql`: `evidenceItems(molecularProfileName: "TP53 R175H", status: ACCEPTED)` → type, level (A–E), significance, disease, therapies, PMID |
@@ -114,11 +114,13 @@ also `print`s it, so `python notebook.py` shows it to you:
   not a mutational hotspot: a hotspot is somatic recurrence in tumours
   (COSMIC, cancerhotspots.org), which this notebook does not query, so do
   not call the residue a hotspot from this count;
-- how many articles mention the variant;
+- how many articles mention the variant, and the exact Europe PMC query
+  (the notations searched);
 - the gene and the protein, named apart with their identifiers (HGNC,
   UniProt), and UniProt's Function sentence: the definition you give;
-- for each paper: what was read (`titre`, `résumé`, `texte intégral`) and
-  the sentence that names the variant;
+- for each paper: why it was selected (`plus cités`, `plus récents`,
+  `texte intégral seulement`), what was read (`titre`, `résumé`, `texte
+  intégral`) and the sentences that name the variant, whole;
 - with `sources.py`'s cells: the allele frequency in gnomAD, the count in
   TCGA tumours, the CIViC evidence by type and level, the PDB structures
   covering the residue or carrying the variant.
@@ -145,9 +147,13 @@ Build260929, UniProtKB 2026_03, interrogés le 2 octobre 2026 »).
 ## Literature: read before you conclude
 
 The literature table has a **« lu »** column (`titre`, `résumé`, `texte
-intégral`) and an **Extrait**: the sentence of the abstract that names the
-variant and its conclusion, or the sentences of the full text's results and
-discussion that name it.
+intégral`) and an **Extrait**: two sentences that name the variant, from
+the abstract or the open-access full text, those of the conclusions,
+discussion and results first, plus the abstract's last sentence (its
+conclusion). Each sentence is whole and tagged with its section
+(`[Results]`, `[Discussion]`); « […] » marks what was left out between
+them. Never cut an excerpt at a number of characters: the cut falls on
+the result.
 
 - **Never conclude from a title.** A paper whose « lu » is `titre` is only a
   pointer: list it, claim nothing from it.
