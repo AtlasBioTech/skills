@@ -33,7 +33,7 @@ drug codes and percentages are exactly what a model gets wrong.
 | What | Call |
 |---|---|
 | Trials | `GET https://clinicaltrials.gov/api/v2/studies` with `query.cond` (disease), `query.intr` (drugs, `OR`-separated; add the target, e.g. `KRAS G12C inhibitor`), optionally `query.term` (biomarker, e.g. `KRAS G12C`), `filter.advanced=AREA[StartDate]RANGE[2021-01-01,MAX]` for "recent", `fields=NCTId,BriefTitle,OverallStatus,Phase,StartDate,LeadSponsorName,EnrollmentCount,InterventionName,HasResults`, `sort=StartDate:desc`, `pageSize=200`, `countTotal=true` → `studies[].protocolSection`, `totalCount` |
-| Trial publications | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=…&format=json&resultType=core&sort=CITED desc` with `PUB_TYPE:"Clinical Trial"` (or `"Randomized Controlled Trial"`, `"Clinical Trial, Phase III"`) and `FIRST_PDATE:[2021-01-01 TO 3000-01-01]`; `TITLE:`/`ABSTRACT:` narrow the terms → `resultList.result[]`: `pmid`, `title`, `journalInfo.journal.title`, `pubYear`, `citedByCount`, `authorString`, `abstractText` |
+| Trial publications | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=…&format=json&resultType=core` with `PUB_TYPE:"Clinical Trial"` (or `"Randomized Controlled Trial"`, `"Clinical Trial, Phase III"`) and `FIRST_PDATE:[2021-01-01 TO 3000-01-01]`; `TITLE:`/`ABSTRACT:` narrow the terms. Run it twice, `sort=CITED desc` **and** `sort=P_PDATE_D desc`: citation counts alone leave out the recent trials → `resultList.result[]`: `pmid`, `title`, `journalInfo.journal.title`, `pubYear`, `citedByCount`, `authorString`, `abstractText` (sections in `<h4>`), `pubTypeList.pubType` (trial, meta-analysis, comment, protocol…) |
 | A trial's page | `https://clinicaltrials.gov/study/{nct}` · an article: `https://europepmc.org/article/MED/{pmid}` |
 
 Drug names you put in `query.intr` are search terms, not facts: list the
@@ -44,16 +44,29 @@ registry say which trials test them.
 
 Read [`references/notebook.py`](references/notebook.py): a complete notebook
 (PARP inhibitors in ovarian cancer) that runs as is. For another question,
-copy its cells and change `CONDITION`, `INTERVENTION`, `SINCE` and
-`PAPERS_QUERY`; keep the structure: question → trials (ClinicalTrials.gov)
-table → drugs counted from the trials → trial publications (Europe PMC)
-table → **facts** → sources.
+copy its cells and change `CONDITION`, `INTERVENTION`, `SINCE`,
+`PAPERS_QUERY`, and `_ABOUT` in the publications cell (the disease as a
+title or a results section names it, e.g. `r"lung cancer|NSCLC|non-small"`:
+a publication on another disease is set aside and listed as such); keep the
+structure: question → trials (ClinicalTrials.gov) table → drugs counted
+from the trials → trial publications (Europe PMC) table with their
+endpoints → **facts** → sources.
+
+The publications table labels each paper's **type** (essai, analyse
+poolée, comparaison indirecte (MAIC), méta-analyse, protocole, commentaire
+/ news) and why it was selected (plus citées, plus récentes), shows the
+**whole** Results section of the abstract (« pas de résultats dans le
+résumé » for a protocol or a comment: never its background instead), and
+reads **ORR, PFS and OS** from it into columns (medians, HR, 95 % CI, p).
+OS always has a value: a figure, « immature », or « non rapportée dans le
+résumé ». Never cut an abstract at a number of characters: abstracts give
+the primary endpoint first, and the cut drops overall survival.
 
 The facts cell computes, from the data above, what the answer rests on, and
 also `print`s it, so `python notebooks/<name>.py` shows it to you: the number
 of trials, by phase and status; the drugs most tested; the phase-3 trials;
-the most cited trial publications with the results section of their
-abstract.
+the Europe PMC query, the publications set aside, and for each publication
+its type, ORR, PFS, OS and Results section.
 
 ## Answer from the data
 
@@ -61,8 +74,9 @@ Your chat answer states these facts with their numbers and sources (NCT ids,
 PMIDs), in French, as the notebook found them. Efficacy figures (response
 rate, progression-free survival, hazard ratio) only from an abstract the
 notebook printed, with its PMID; if a figure is not there, say it was not
-checked rather than quoting it from memory. Say which trials are still
-recruiting.
+checked rather than quoting it from memory. For each trial you summarise,
+give overall survival as the notebook found it, including « non rapportée
+dans le résumé » or « immature ». Say which trials are still recruiting.
 
 ## Before you end your turn
 

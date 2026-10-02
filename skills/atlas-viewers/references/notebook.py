@@ -248,39 +248,104 @@ def _(mo):
 
 
 @app.cell
-def _(GENE, VARIANT, get_json, pd, re, requests):
+def _(GENE, VARIANT, get_json, re):
+    # Which papers: those naming the variant in their title or abstract under
+    # any of its notations (G12D, Gly12Asp, p.G12D, and the cDNA change ClinVar
+    # gives, c.35G>A), the most cited AND the most recent (citation counts
+    # alone keep only old work), plus the most cited that name it only in
+    # their full text. The queries are kept: the answer says what was searched.
+    _EPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest"
+    _AA3 = dict(zip("ARNDCQEGHILKMFPSTWYV", "Ala Arg Asn Asp Cys Gln Glu Gly His Ile Leu Lys Met Phe Pro Ser Thr Trp Tyr Val".split()))
+    _ref, _pos, _alt = re.fullmatch(r"([A-Z])(\d+)([A-Z])", VARIANT).groups()
+    _three = f"{_AA3[_ref]}{_pos}{_AA3[_alt]}"
+    variant_names = [VARIANT, _three, f"p.{VARIANT}", f"p.{_three}"]
+    try:
+        # ClinVar titles read "NM_004985.5(KRAS):c.35G>A (p.Gly12Asp)".
+        _eutils = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+        _ids = get_json(
+            f"{_eutils}/esearch.fcgi", {"db": "clinvar", "term": f'{GENE}[gene] AND "p.{_three}"', "retmode": "json"}
+        )["esearchresult"]["idlist"]
+        _records = get_json(f"{_eutils}/esummary.fcgi", {"db": "clinvar", "id": ",".join(_ids), "retmode": "json"})["result"] if _ids else {"uids": []}
+        for _u in _records["uids"]:
+            # The search is loose (it also finds p.Arg175Cys): keep exact matches only.
+            if (_m := re.search(rf"(c\.\S+) \(p\.{_three}\)", _records[_u]["title"])) and _m.group(1) not in variant_names:
+                variant_names.append(_m.group(1))
+    except Exception:
+        pass  # the protein notations are enough to search with
+    _in_title_or_abstract = " OR ".join(f'TITLE_ABS:"{_n}"' for _n in variant_names)
+    literature_query = f"({_in_title_or_abstract}) AND {GENE}"
+    _full_text_only = "(" + " OR ".join(f'"{_n}"' for _n in variant_names) + f") AND {GENE} AND OPEN_ACCESS:y AND NOT ({_in_title_or_abstract})"
+
+    def _search(query, sort, size):
+        # "core": "lite" has no abstract.
+        return get_json(f"{_EPMC}/search", {"query": query, "format": "json", "pageSize": size, "sort": sort, "resultType": "core"})
+
+    literature_hits, literature_count, full_text_only_count, literature_error = [], None, None, None
+    try:
+        _found = [
+            ("plus cités", _search(literature_query, "CITED desc", 5)),
+            ("plus récents", _search(literature_query, "P_PDATE_D desc", 5)),
+            ("texte intégral seulement", _search(_full_text_only, "CITED desc", 3)),
+        ]
+        literature_count, full_text_only_count = int(_found[0][1]["hitCount"]), int(_found[2][1]["hitCount"])
+        _seen = {}
+        for _label, _page in _found:
+            for _r in _page["resultList"]["result"]:
+                _seen.setdefault(_r["id"], {**_r, "sélection": []})["sélection"].append(_label)
+        literature_hits = list(_seen.values())
+    except Exception as _err:
+        literature_error = str(_err)
+    return full_text_only_count, literature_count, literature_error, literature_hits, literature_query, variant_names
+
+
+@app.cell
+def _(literature_hits, pd, re, requests, variant_names):
     # A title is not evidence: keep each paper's abstract and, for the
-    # open-access ones, the full text's results and discussion. "lu" says
-    # which of the three the excerpt comes from, so the answer can say what
-    # was read and quote the sentence a claim rests on.
+    # open-access ones, the full text's results, discussion and conclusions.
+    # "lu" says which of the three the excerpt comes from, so the answer can
+    # say what was read and quote the sentence a claim rests on.
+    from html import unescape as _unescape
     import xml.etree.ElementTree as ET
     from concurrent.futures import ThreadPoolExecutor
 
-    _EPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest"
-    _SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-Z(])")
+    # A sentence ends at . ! or ? before a capital, but not after "et al." or "Fig.".
+    _SENTENCE = re.compile(r"(?<=[.!?])(?<!\bal\.)(?<!Fig\.)(?<!\bvs\.)(?<!e\.g\.)(?<!i\.e\.)\s+(?=[A-Z(\[])")
+    # Sections quoted first: conclusions and discussion, then results; then the rest.
+    _RANK = [r"conclu|interpret|discussion|summary|significance", r"result|finding"]
+    _FINDS = r"\b(show|demonstrat|reveal|found|suggest|indicat|conclud|confer|promot|induc|requir|associat|increas|decreas|reduc|restor|abolish|impair|lead)"
 
     def _clean(text):
-        return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", text or "")).strip()
+        # Tags out after unescaping (titles escape theirs), but not "p<0.001".
+        return re.sub(r"\s+", " ", re.sub(r"</?[a-zA-Z][a-zA-Z0-9]*[^<>]*>", " ", _unescape(text or ""))).strip()
 
-    def _excerpt(text, conclusion=True):
-        # The first sentences naming the variant and, for an abstract, its
-        # last one (the conclusion): what the paper did and what it found.
-        _sentences = _SENTENCE.split(text)
-        _picked = [_s for _s in _sentences if VARIANT in _s][: 1 if conclusion else 2]
-        if conclusion and _sentences and _sentences[-1] not in _picked:
-            _picked.append(_sentences[-1])
-        return " […] ".join(_picked)[:600]
+    def _abstract_sections(abstract):
+        # Europe PMC marks a structured abstract's sections with <h4>.
+        _parts = re.split(r"<h4>(.*?)</h4>", abstract or "")
+        return [("", _clean(_parts[0]))] + [(_clean(_parts[_i]), _clean(_parts[_i + 1])) for _i in range(1, len(_parts) - 1, 2)]
+
+    def _excerpt(sections, n):
+        # The n sentences naming the variant, those of the conclusions and
+        # results first, those stating a finding before the others; each
+        # whole and labelled with its section, never cut at a length.
+        _picked = []
+        for _title, _text in sections:
+            _rank = next((_i for _i, _p in enumerate(_RANK) if re.search(_p, _title, re.I)), len(_RANK))
+            for _s in _SENTENCE.split(_text):
+                if any(_n in _s for _n in variant_names):
+                    _picked.append((_rank, not re.search(_FINDS, _s, re.I), len(_picked), _title, _s))
+        return [(_t, _s) for *_, _t, _s in sorted(_picked)[:n]]
 
     def _full_text(pmcid):
-        # Results and discussion sections of an open-access article; "" when
-        # it cannot be had quickly (the abstract is used instead).
+        # Results, discussion and conclusion sections of an open-access
+        # article as [(title, text)]; [] when it cannot be had quickly.
         try:
             # Not get_json: asked for JSON, Europe PMC refuses the XML (406).
-            _response = requests.get(f"{_EPMC}/{pmcid}/fullTextXML", timeout=20)
+            _response = requests.get(f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML", timeout=20)
             _response.raise_for_status()
             _body = ET.fromstring(_response.content).find("body")
         except (requests.RequestException, ET.ParseError):
-            return ""
+            return []
+
         def _prose(node):
             # Text without the figures and tables, which JATS may nest in a paragraph.
             return (node.text or "") + "".join(
@@ -295,62 +360,55 @@ def _(GENE, VARIANT, get_json, pd, re, requests):
                 elif _child.tag == "sec":
                     yield from _paragraphs(_child)
 
-        _sections = [
-            _sec for _sec in (_body.findall("sec") if _body is not None else [])
-            if re.search(r"result|discussion", f"{_sec.get('sec-type', '')} {_sec.findtext('title') or ''}", re.I)
+        return [
+            (_sec.findtext("title") or _sec.get("sec-type", ""), _clean(" ".join(_paragraphs(_sec))))
+            for _sec in (_body.findall("sec") if _body is not None else [])
+            if re.search(r"result|discussion|conclu", f"{_sec.get('sec-type', '')} {_sec.findtext('title') or ''}", re.I)
         ]
-        return _clean(" ".join(_p for _sec in _sections for _p in _paragraphs(_sec)))
 
-    papers, literature_count, literature_error = pd.DataFrame(), None, None
-    try:
-        _found = get_json(
-            f"{_EPMC}/search",
+    # Only open-access articles have their full text in Europe PMC (the
+    # others answer with an error after seconds); fetched in parallel, ~5 s each.
+    _open = [_r["pmcid"] for _r in literature_hits if _r.get("isOpenAccess") == "Y" and _r.get("pmcid")]
+    with ThreadPoolExecutor(max_workers=4) as _pool:
+        _bodies = dict(zip(_open, _pool.map(_full_text, _open)))
+    _rows = []
+    for _r in literature_hits:
+        _abstract, _body = _abstract_sections(_r.get("abstractText")), _bodies.get(_r.get("pmcid"), [])
+        _lu = "texte intégral" if _body else "résumé" if _clean(_r.get("abstractText")) else "titre"
+        # Two sentences naming the variant (abstract and full text together),
+        # and the abstract's last sentence, its conclusion, when not already in.
+        _picked = _excerpt(_abstract + _body, 2)
+        _end = next((_s for _s in reversed(_abstract) if _s[1] and not re.search(r"fund|regist", _s[0], re.I)), ("", ""))
+        _last = _SENTENCE.split(_end[1])[-1] if _end[1] else ""
+        if _last and all(_s != _last for _, _s in _picked):
+            _picked.append((_end[0] or "fin du résumé", _last))
+        _rows.append(
             {
-                "query": f'(TITLE:"{VARIANT}" OR ABSTRACT:"{VARIANT}") AND {GENE}',
-                "format": "json",
-                "pageSize": 8,
-                "sort": "CITED desc",
-                "resultType": "core",  # "lite" has no abstract
-            },
+                "Titre": _clean(_r.get("title")),
+                "Premier auteur": (_r.get("authorString") or "").split(",")[0],
+                "Revue": _r.get("journalInfo", {}).get("journal", {}).get("isoabbreviation", ""),
+                "Année": _r.get("pubYear", ""),
+                "Citations": _r.get("citedByCount", 0),
+                "sélection": ", ".join(_r["sélection"]),
+                "lu": _lu,
+                "Extrait": " […] ".join(f"[{_t or 'résumé'}] {_s}" for _t, _s in _picked),
+                "pmid": _r.get("pmid", ""),
+            }
         )
-        literature_count = int(_found["hitCount"])
-        _hits = _found["resultList"]["result"]
-        # Only open-access articles have their full text in Europe PMC (the
-        # others answer with an error after seconds); fetched in parallel,
-        # ~5 s each, at most the 8 papers above.
-        _open = [_r["pmcid"] for _r in _hits if _r.get("isOpenAccess") == "Y" and _r.get("pmcid")]
-        with ThreadPoolExecutor(max_workers=4) as _pool:
-            _bodies = dict(zip(_open, _pool.map(_full_text, _open)))
-        _rows = []
-        for _r in _hits:
-            _abstract, _body = _clean(_r.get("abstractText")), _bodies.get(_r.get("pmcid"), "")
-            _lu = "texte intégral" if _body else "résumé" if _abstract else "titre"
-            _rows.append(
-                {
-                    "Titre": _clean(_r.get("title")),
-                    "Premier auteur": (_r.get("authorString") or "").split(",")[0],
-                    "Revue": _r.get("journalInfo", {}).get("journal", {}).get("isoabbreviation", ""),
-                    "Année": _r.get("pubYear", ""),
-                    "Citations": _r.get("citedByCount", 0),
-                    "lu": _lu,
-                    "Extrait": (_excerpt(_body, conclusion=False) if _body else "") or _excerpt(_abstract),
-                    "pmid": _r.get("pmid", ""),
-                }
-            )
-        papers = pd.DataFrame(_rows)
-    except Exception as _err:
-        literature_error = str(_err)
-    return literature_count, literature_error, papers
+    papers = pd.DataFrame(_rows, columns=["Titre", "Premier auteur", "Revue", "Année", "Citations", "sélection", "lu", "Extrait", "pmid"])
+    return (papers,)
 
 
 @app.cell
-def _(GENE, VARIANT, av, literature_count, literature_error, mo, papers):
+def _(GENE, VARIANT, av, full_text_only_count, literature_count, literature_error, literature_query, mo, papers):
     mo.stop(literature_error is not None, mo.callout(mo.md(f"Europe PMC injoignable : {literature_error}"), kind="warn"))
     mo.vstack([
         mo.md(
-            f"**{literature_count} articles** sur {GENE} {VARIANT}, les plus cités. « lu » dit ce qui a été lu "
-            "de chacun (titre, résumé, texte intégral en accès libre) ; l'extrait cite les phrases qui nomment le variant "
-            "(et la conclusion, pour un résumé)."
+            f"**{literature_count} articles** nomment {GENE} {VARIANT} dans leur titre ou leur résumé "
+            f"(recherche : `{literature_query}`), et {full_text_only_count} autres, en accès libre, seulement dans leur texte intégral. "
+            "Ci-dessous les 5 plus cités, les 5 plus récents et les 3 plus cités du texte intégral (« sélection »). "
+            "« lu » dit ce qui a été lu de chacun (titre, résumé, texte intégral en accès libre) ; l'extrait cite, "
+            "entières et avec leur section, les phrases qui nomment le variant, conclusions et résultats d'abord."
         ),
         av.table(
             papers,
@@ -362,7 +420,7 @@ def _(GENE, VARIANT, av, literature_count, literature_error, mo, papers):
 
 
 @app.cell
-def _(RESIDUE, VARIANT, clinvar, definition, domains, literature_count, mo, papers, sites):
+def _(RESIDUE, VARIANT, clinvar, definition, domains, full_text_only_count, literature_count, literature_query, mo, papers, sites, variant_names):
     # The facts the answer rests on, computed from the data above. Printed as
     # well: `python notebook.py` then shows them to whoever checks the notebook.
     _domain = next((d for d in domains if d["start"] <= RESIDUE <= d["end"]), None)
@@ -382,11 +440,16 @@ def _(RESIDUE, VARIANT, clinvar, definition, domains, literature_count, mo, pape
         f"Variants pathogènes en position {RESIDUE} : {_at_residue} (point chaud mutationnel si plusieurs)",
         f"Articles (Europe PMC) : {literature_count if literature_count is not None else 'non disponible'}",
     ]
+    # Literature search: what was searched, so the answer can say it.
+    facts += [
+        f"Recherche Europe PMC (titre ou résumé) : {literature_query} — notations cherchées : {', '.join(variant_names)}",
+        f"Articles en accès libre qui ne nomment le variant que dans leur texte intégral : {full_text_only_count if full_text_only_count is not None else 'non disponible'}",
+    ]
     # What each paper says, and how much of it was read: the answer cites
     # these excerpts, never a title alone.
     for _p in papers.to_dict("records"):
         facts.append(
-            f"PMID {_p['pmid']} ({_p['Premier auteur']} et al., {_p['Revue']}, {_p['Année']}) — lu : {_p['lu']} — "
+            f"PMID {_p['pmid']} ({_p['Premier auteur']} et al., {_p['Revue']}, {_p['Année']} ; {_p['sélection']}) — lu : {_p['lu']} — "
             f"{_p['Titre']} — extrait : {_p['Extrait'] or '(aucun)'}"
         )
     print("\n".join(facts))

@@ -60,7 +60,7 @@ Where the data comes from:
 | Protein length, domains, function | `GET https://rest.uniprot.org/uniprotkb/{accession}.json` → `sequence.length`, `features` (types Domain, Region, Motif, DNA binding, Zinc finger), `comments[commentType=FUNCTION]`, the gene's HGNC id in `uniProtKBCrossReferences[database=HGNC]` |
 | AlphaFold model | `GET https://alphafold.ebi.ac.uk/api/prediction/{accession}` → `[0]["cifUrl"]` (never hard-code the model version) |
 | ClinVar variants | `esearch.fcgi?db=clinvar&term={GENE}[gene] AND single_gene[prop] AND missense_variant[molecular_consequence]&retmode=json`, then `esummary.fcgi?db=clinvar&id=…` (≤ 400 ids per call); protein change in `title`, class in `germline_classification.description` |
-| Literature | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=…&format=json&sort=CITED desc&resultType=core` → `abstractText`, `isOpenAccess`, `pmcid` (`lite` has no abstract) |
+| Literature | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=…&format=json&resultType=core` → `abstractText` (sections in `<h4>`), `isOpenAccess`, `pmcid` (`lite` has no abstract). Query every notation of the variant (`TITLE_ABS:"R175H" OR TITLE_ABS:"Arg175His" OR … TITLE_ABS:"c.524G>A"`, the cDNA change from ClinVar's record title) `AND {GENE}`; run it twice, `sort=CITED desc` **and** `sort=P_PDATE_D desc`, so recent work is not left out; the same notations `AND OPEN_ACCESS:y AND NOT (…title/abstract…)` finds the papers that name it only in their full text |
 | Full text (open access only) | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML` → JATS XML, `body/sec` with `sec-type` results, discussion. Only when `isOpenAccess == "Y"`: the others fail after seconds |
 
 ## Recipe
@@ -82,11 +82,13 @@ also `print`s it, so `python notebook.py` shows it to you:
   the conditions it is reported for;
 - how many pathogenic variants sit at the same residue (several = a
   mutational hotspot);
-- how many articles mention the variant;
+- how many articles mention the variant, and the exact Europe PMC query
+  (the notations searched);
 - the gene and the protein, named apart with their identifiers (HGNC,
   UniProt), and UniProt's Function sentence: the definition you give;
-- for each paper: what was read (`titre`, `résumé`, `texte intégral`) and
-  the sentence that names the variant.
+- for each paper: why it was selected (`plus cités`, `plus récents`,
+  `texte intégral seulement`), what was read (`titre`, `résumé`, `texte
+  intégral`) and the sentences that name the variant, whole.
 
 ## Answer from the data
 
@@ -99,9 +101,13 @@ skill for how to word it.
 ## Literature: read before you conclude
 
 The literature table has a **« lu »** column (`titre`, `résumé`, `texte
-intégral`) and an **Extrait**: the sentence of the abstract that names the
-variant and its conclusion, or the sentences of the full text's results and
-discussion that name it.
+intégral`) and an **Extrait**: two sentences that name the variant, from
+the abstract or the open-access full text, those of the conclusions,
+discussion and results first, plus the abstract's last sentence (its
+conclusion). Each sentence is whole and tagged with its section
+(`[Results]`, `[Discussion]`); « […] » marks what was left out between
+them. Never cut an excerpt at a number of characters: the cut falls on
+the result.
 
 - **Never conclude from a title.** A paper whose « lu » is `titre` is only a
   pointer: list it, claim nothing from it.
