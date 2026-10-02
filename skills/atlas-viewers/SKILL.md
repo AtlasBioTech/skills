@@ -14,8 +14,10 @@ typed from what you read on the web is not an answer, even if it is correct.
 
 1. **Fetch in the notebook.** Every number you report (length, domains,
    ClinVar classification, article count) comes from a cell that calls the
-   public API with `requests`. Your own web-fetch tool is only for exploring
-   an API before you write that cell.
+   public API through the reference's `get_json` (or `fetch`) helper, which
+   logs each request for the « Provenance » table and saves the raw
+   response. Your own web-fetch tool is only for exploring an API before you
+   write that cell.
 2. **Show all three viewers** for a protein or variant question:
    - `av.structure` — the AlphaFold model, the variant's residue highlighted;
    - `av.variants` — the ClinVar variants along the protein, UniProt domains drawn;
@@ -62,6 +64,14 @@ Where the data comes from:
 | ClinVar variants | `esearch.fcgi?db=clinvar&term={GENE}[gene] AND single_gene[prop] AND missense_variant[molecular_consequence]&retmode=json`, then `esummary.fcgi?db=clinvar&id=…` (≤ 400 ids per call); protein change in `title`, class in `germline_classification.description` |
 | Literature | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=…&format=json&sort=CITED desc&resultType=core` → `abstractText`, `isOpenAccess`, `pmcid` (`lite` has no abstract) |
 | Full text (open access only) | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML` → JATS XML, `body/sec` with `sec-type` results, discussion. Only when `isOpenAccess == "Y"`: the others fail after seconds |
+| Population frequency | gnomAD GraphQL `POST https://gnomad.broadinstitute.org/api`: `gene(gene_symbol, reference_genome: GRCh38) { variants(dataset: gnomad_r4) { variant_id hgvsp exome { ac an } genome { ac an } } }`, matched on `hgvsp` (`p.Arg175His`) |
+| Frequency in tumours | cBioPortal `https://www.cbioportal.org/api`: studies `keyword=tcga_pan_can_atlas_2018`, `POST /sample-lists/fetch` (`{study}_sequenced`, the denominator), `POST /mutations/fetch` `{entrezGeneIds, molecularProfileIds: [{study}_mutations]}` → `proteinChange` |
+| Clinical evidence | CIViC GraphQL `POST https://civicdb.org/api/graphql`: `evidenceItems(molecularProfileName: "TP53 R175H", status: ACCEPTED)` → type, level (A–E), significance, disease, therapies, PMID |
+| Experimental structures | RCSB `POST https://search.rcsb.org/rcsbsearch/v2/query` (UniProt accession, `return_type: entry`), then `POST https://data.rcsb.org/graphql` `entries(entry_ids)` → method, resolution, aligned residues, `pdbx_mutation`, ligands, partners |
+| TP53 only | NCI TP53 Database: no API; its open release file `https://tp53.cancer.gov/static/data/MutationView_r21.csv` (transactivation class, dominant-negative activity, hotspot) |
+
+COSMIC and OncoKB need a licence or a token: do not use them, and say so if
+the question needs them.
 
 ## Recipe
 
@@ -70,7 +80,16 @@ Read [`references/notebook.py`](references/notebook.py): a complete notebook
 the gene, its accession (look it up, see above: a wrong one shows another
 protein), the variant and the residue numbers; keep the
 structure: question → protein (UniProt) → 3D structure → ClinVar variants
-plot and table → literature → **facts** → sources.
+plot and table → literature → **facts** → sources → **provenance**.
+
+For a **variant** question, also read
+[`references/sources.py`](references/sources.py) (TP53 p.R175H, a second,
+smaller notebook that runs as is) and copy its cells A–E after the ClinVar
+cells: population frequency (gnomAD), frequency in tumours (cBioPortal),
+clinical evidence (CIViC), experimental structures (PDB), UniProt's
+annotations of the residue, and, for TP53 only, the NCI TP53 Database. Its
+constants have the same names as `notebook.py`'s. Paste its `facts += [...]`
+block into your facts cell, and keep a single « Provenance » cell, last.
 
 The facts cell computes, from the data above, what the answer rests on, and
 also `print`s it, so `python notebook.py` shows it to you:
@@ -86,7 +105,17 @@ also `print`s it, so `python notebook.py` shows it to you:
 - the gene and the protein, named apart with their identifiers (HGNC,
   UniProt), and UniProt's Function sentence: the definition you give;
 - for each paper: what was read (`titre`, `résumé`, `texte intégral`) and
-  the sentence that names the variant.
+  the sentence that names the variant;
+- with `sources.py`'s cells: the allele frequency in gnomAD, the count in
+  TCGA tumours, the CIViC evidence by type and level, the PDB structures
+  covering the residue or carrying the variant.
+
+The last cell, « Provenance », lists every request: source, release (UniProt
+release, ClinVar build, ClinicalTrials.gov data date, AlphaFold model
+version…; « aucune version publiée » when the source has none), exact query
+and UTC date, and prints one line per source. The raw responses are saved,
+gzipped, under `provenance/<date>/` next to the notebook, with
+`requests.json`, the full log.
 
 ## Answer from the data
 
@@ -95,6 +124,10 @@ French, as found by the notebook — not from memory and not hedged with
 "généralement". Add what the literature says and the clinical context (the
 conditions ClinVar lists for the variant). Follow the `scientific-rigor`
 skill for how to word it.
+
+Say when and from which releases the data were taken: the date and each
+source's release, as the « Provenance » lines printed them (e.g. « ClinVar
+Build260929, UniProtKB 2026_03, interrogés le 2 octobre 2026 »).
 
 ## Literature: read before you conclude
 
@@ -119,8 +152,9 @@ discussion that name it.
 ## Before you end your turn
 
 1. Re-read `notebook.py`: it contains `av.structure(`, `av.variants(` and
-   `av.table(`, each the last expression of its cell, and `requests.get`
-   calls for the data. If a viewer is missing, add its cell now.
+   `av.table(`, each the last expression of its cell, `requests.get`
+   calls for the data, and the « Provenance » cell last. If a viewer is
+   missing, add its cell now.
 2. Run, from the workspace folder, `marimo check notebook.py` then
    `python notebook.py` (must exit 0). Fix and re-run until both pass.
 3. Answer in the chat from the facts `python notebook.py` printed, and
