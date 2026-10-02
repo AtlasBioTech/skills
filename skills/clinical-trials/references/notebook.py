@@ -368,7 +368,12 @@ def _(
     # What the answer rests on, computed from the data above and printed so
     # that `python notebook.py` shows it to the agent.
     # Trial counts: all over `scope`, every phase-3 trial listed (none dropped).
-    _phase3 = scope.assign(molécules=tested)[scope["phase"].str.contains("Phase 3")].to_dict("records")
+    # Phase 3 and phase 2/3 together, the header says how many of each; trials
+    # of none of the searched drugs come last and are counted in the header.
+    _phase3 = scope.assign(molécules=tested)[scope["phase"].str.contains("Phase 3")]
+    _phase3 = _phase3.sort_values("molécules", key=lambda m: m.map(len) == 0, kind="stable").to_dict("records")
+    _p23 = sum(t["phase"] == "Phase 2/Phase 3" for t in _phase3)
+    _other = sum(not t["molécules"] for t in _phase3)
     _withdrawn = int((excluded["statut"] == "WITHDRAWN").sum())
     facts = [f"ClinicalTrials.gov injoignable : {trials_error}"] if trials_error else []
     facts += [
@@ -380,7 +385,8 @@ def _(
         f"Essais testant une molécule recherchée dans un bras expérimental : {int(on_drug.sum())}",
         "Molécules les plus testées (bras expérimentaux seulement, synonymes fusionnés) : "
         + ", ".join(f"{r.traitement} ({r.essais})" for r in drug_counts.itertuples() if r.essais),
-        f"Essais de phase 3 (les {len(_phase3)}) : " + ("; ".join(
+        f"Essais de phase 3 ou 2/3 ({len(_phase3)} = {len(_phase3) - _p23} phase 3 + {_p23} phase 2/3 ; "
+        f"dont {_other} sans molécule recherchée, listés en dernier) : " + ("; ".join(
             f"{t['nct']} {t['titre']} [{t['statut']} ; {t['effectif']} ; molécule : {', '.join(t['molécules']) or 'aucune des recherchées'}"
             + (" ; arrêt : " + t["motif d'arrêt"] if t["motif d'arrêt"] else "") + "]"
             for t in _phase3
