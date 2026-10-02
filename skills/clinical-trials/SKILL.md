@@ -15,9 +15,11 @@ drug codes and percentages are exactly what a model gets wrong.
 ## Rules
 
 1. **Query in the notebook.** Trials come from ClinicalTrials.gov, published
-   results from Europe PMC, each in a cell that calls the API with `requests`.
-   Your own web-fetch and shell tools are only for trying a query before you
-   write that cell.
+   results from Europe PMC, each in a cell that calls the API through the
+   reference's `get_json` helper (`requests` inside), which logs each request
+   for the « Provenance » table and saves the raw response. Your own
+   web-fetch and shell tools are only for trying a query before you write
+   that cell.
 2. **Show both tables** with `av.table`: the trials (NCT id linked to the
    trial page) and the trial publications (title linked to the article).
 3. `import atlas_viewers as av` in the first cell, next to `import marimo as mo`.
@@ -47,13 +49,19 @@ Read [`references/notebook.py`](references/notebook.py): a complete notebook
 copy its cells and change `CONDITION`, `INTERVENTION`, `SINCE` and
 `PAPERS_QUERY`; keep the structure: question → trials (ClinicalTrials.gov)
 table → drugs counted from the trials → trial publications (Europe PMC)
-table → **facts** → sources.
+table → **facts** → sources → **provenance**.
 
 The facts cell computes, from the data above, what the answer rests on, and
 also `print`s it, so `python notebooks/<name>.py` shows it to you: the number
 of trials, by phase and status; the drugs most tested; the phase-3 trials;
 the most cited trial publications with the results section of their
 abstract.
+
+The last cell, « Provenance », lists every request: source, release
+(ClinicalTrials.gov API version and data date; Europe PMC publishes none and
+the table says so), exact query and UTC date, and prints one line per
+source. The raw responses are saved, gzipped, under `provenance/<date>/`
+next to the notebook, with `requests.json`, the full log.
 
 ## Answer from the data
 
@@ -62,13 +70,15 @@ PMIDs), in French, as the notebook found them. Efficacy figures (response
 rate, progression-free survival, hazard ratio) only from an abstract the
 notebook printed, with its PMID; if a figure is not there, say it was not
 checked rather than quoting it from memory. Say which trials are still
-recruiting.
+recruiting. Say when the registry was queried and its data date, as the
+« Provenance » line printed it (« ClinicalTrials.gov, données du … »).
 
 ## Before you end your turn
 
 1. Re-read the notebook: it contains two `av.table(` calls, each the last
-   expression of its cell, and `requests.get` calls to
-   `clinicaltrials.gov/api/v2` and Europe PMC.
+   expression of its cell, `requests.get` calls to
+   `clinicaltrials.gov/api/v2` and Europe PMC, and the « Provenance » cell
+   last.
 2. Run `marimo check notebooks/<name>.py` then `python notebooks/<name>.py`
    (must exit 0) from the project folder. Fix and re-run until both pass.
 3. Answer in the chat from the facts it printed, and point to the tables.
