@@ -61,7 +61,8 @@ Where the data comes from:
 | Gene → UniProt accession | `GET https://rest.uniprot.org/uniprotkb/search?query=gene_exact:{GENE} AND organism_id:9606 AND reviewed:true&fields=accession&format=json` → `results[0].primaryAccession`. Never type an accession from memory without this check (the reference notebook does it) |
 | Protein length, domains, function | `GET https://rest.uniprot.org/uniprotkb/{accession}.json` → `sequence.length`, `features` (types Domain, Region, Motif, DNA binding, Zinc finger), `comments[commentType=FUNCTION]`, the gene's HGNC id in `uniProtKBCrossReferences[database=HGNC]` |
 | AlphaFold model | `GET https://alphafold.ebi.ac.uk/api/prediction/{accession}` → `[0]["cifUrl"]` (never hard-code the model version) |
-| ClinVar variants | `esearch.fcgi?db=clinvar&term={GENE}[gene] AND single_gene[prop] AND missense_variant[molecular_consequence]&retmode=json`, then `esummary.fcgi?db=clinvar&id=…` (≤ 400 ids per call); protein change in `title`, class in `germline_classification.description` |
+| ClinVar variants | `esearch.fcgi?db=clinvar&term={GENE}[gene] AND missense_variant[molecular_consequence]&retmode=json`, paged with `retstart`/`retmax` until `esearchresult.count` ids are in hand (never `single_gene[prop]`: it drops every record that also lists an overlapping locus, e.g. all of BRCA1's exon 11), then `esummary.fcgi?db=clinvar&id=…` (≤ 400 ids per call); check that as many records came back as `count` said. Transcript, gene, c. and p. changes in `title`; keep the records on the gene's reference transcript (MANE Select, the most frequent in the titles). Classes: `germline_classification`, and the somatic ones apart, `oncogenicity_classification` and `clinical_impact_classification` (each with `description`, `review_status`, `last_evaluated`); a record with none has "no classification provided" (evidence-only submissions). GRCh38 position in `variation_set[0].variation_loc`, `canonical_spdi`, dbSNP in `variation_xrefs` |
+| One variant's submissions | `efetch.fcgi?db=clinvar&id={variation id}&rettype=vcv&is_variationid` → XML, one `ClinicalAssertion` per submission with its own `Classification`; an expert panel's ACMG criteria are in its `Classification/Comment` |
 | Literature | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=…&format=json&sort=CITED desc&resultType=core` → `abstractText`, `isOpenAccess`, `pmcid` (`lite` has no abstract) |
 | Full text (open access only) | `GET https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML` → JATS XML, `body/sec` with `sec-type` results, discussion. Only when `isOpenAccess == "Y"`: the others fail after seconds |
 | Population frequency | gnomAD GraphQL `POST https://gnomad.broadinstitute.org/api`: `gene(gene_symbol, reference_genome: GRCh38) { variants(dataset: gnomad_r4) { variant_id hgvsp exome { ac an } genome { ac an } } }`, matched on `hgvsp` (`p.Arg175His`) |
@@ -77,8 +78,9 @@ the question needs them.
 
 Read [`references/notebook.py`](references/notebook.py): a complete notebook
 (KRAS p.G12D) that runs as is. For another protein, copy its cells and change
-the gene, its accession (look it up, see above: a wrong one shows another
-protein), the variant and the residue numbers; keep the
+the four constants `GENE`, `ACCESSION` (look it up, see above: a wrong one
+shows another protein), `VARIANT` and `RESIDUE`: every title, label and
+source line is built from them, so write none by hand; keep the
 structure: question → protein (UniProt) → 3D structure → ClinVar variants
 plot and table → literature → **facts** → sources → **provenance**.
 
@@ -95,12 +97,23 @@ The facts cell computes, from the data above, what the answer rests on, and
 also `print`s it, so `python notebook.py` shows it to you:
 
 - the region or domain holding the residue;
-- functional sites within a few residues (UniProt binding sites of a
-  ligand or a metal ion, catalytic or DNA-contact sites);
-- the variant's ClinVar classification, review status, variation id and
-  the conditions it is reported for;
-- how many pathogenic variants sit at the same residue (several = a
-  mutational hotspot);
+- the residue's neighbours **in 3D** (an atom within 8 Å in the AlphaFold
+  model), the functional sites among them (UniProt binding sites of a
+  ligand or a metal ion, catalytic or DNA-contact sites), and the pLDDT at
+  the residue and over the model: a neighbourhood or a site counted along
+  the sequence misses what folds next to the residue;
+- the variant's full nomenclature (HGVS c. and p. on the reference
+  transcript, GRCh38 position, SPDI, dbSNP);
+- its ClinVar germline classification with review status (stars), last
+  evaluation date and conditions, its somatic classifications apart, the
+  submissions by class, and an expert panel's ACMG criteria when there is
+  one; say what is not there (functional assays in detail);
+- how many ClinVar records were found, fetched and kept, and how many have
+  no classification;
+- how many pathogenic ClinVar variants sit at the same residue. That is
+  not a mutational hotspot: a hotspot is somatic recurrence in tumours
+  (COSMIC, cancerhotspots.org), which this notebook does not query, so do
+  not call the residue a hotspot from this count;
 - how many articles mention the variant;
 - the gene and the protein, named apart with their identifiers (HGNC,
   UniProt), and UniProt's Function sentence: the definition you give;
